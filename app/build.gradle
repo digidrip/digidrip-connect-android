@@ -1,0 +1,73 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'eu.digidrip.connect'
+    compileSdk 33
+
+    defaultConfig {
+        applicationId "eu.digidrip.connect"
+        minSdk 26
+        targetSdk 33
+        versionCode 1
+        versionName "1.0.0-alpha.1"
+
+		buildConfigField "long", "buildTime", System.currentTimeMillis() + "L"
+
+        setProperty "archivesBaseName", "digidrip-connect-" + getVersionName()
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    signingConfigs {
+        digidrip {
+            storeFile file(System.getenv("ANDROID_KEYSTORE") ?: "/dev/null")
+            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("ANDROID_KEY_ALIAS")
+            keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+
+			v1SigningEnabled true
+			v2SigningEnabled true
+            v2SigningEnabled true
+        }
+    }
+
+    buildTypes {
+        debug {
+        }
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            shrinkResources true
+
+            signingConfig signingConfigs.digidrip
+        }
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/*.md']
+        }
+    }
+}
+
+dependencies {
+
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.9.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.1.0'
+    implementation 'org.eclipse.paho:org.eclipse.paho.android.service:1.1.1'
+
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+}
