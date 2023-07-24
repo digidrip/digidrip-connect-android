@@ -1,13 +1,6 @@
 package eu.digidrip.connect;
 
 import android.app.Service;
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothManager;
-import android.bluetooth.le.BluetoothLeScanner;
-import android.bluetooth.le.ScanCallback;
-import android.bluetooth.le.ScanFilter;
-import android.bluetooth.le.ScanResult;
-import android.bluetooth.le.ScanSettings;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -21,7 +14,6 @@ import android.os.Binder;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
-import android.os.ParcelUuid;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -29,27 +21,14 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.UUID;
 
 public class BluetoothLeService extends Service {
     public static final String TAG = BluetoothLeService.class.getSimpleName();
 
-    public final UUID UUID_EDDYSTONE =
-            UUID.fromString("0000feaa-0000-1000-8000-00805f9b34fb");
-
-    public static final String URI_EDDYSTONE_DIGIDRIP = new String((char) 0x01 + "digidrip.eu/");
-
-    public static final String URI_EDDYSTONE_AFARCLOUD = new String((char) 0x00 + "afarcloud.eu/");
-
     private final IBinder mBinder = new LocalBinder();
 
-    private BluetoothManager mBluetoothManager;
-    private BluetoothAdapter mBluetoothAdapter;
-    private BluetoothLeScanner mBluetoothLeScanner;
+    private static final long SCAN_PAUSE_PERIOD = 50000;
 
     private Runnable delayedStartScanning = () -> startScanning();
 
@@ -76,7 +55,6 @@ public class BluetoothLeService extends Service {
 
     private Handler mHandler;
 
-    private static final long SCAN_PAUSE_PERIOD = 50000;
     public static final String EXTRA_DATA_LATI =
             TAG + ".EXTRA_DATA_LATI";
     public static final String EXTRA_DATA_LONG =
@@ -102,7 +80,6 @@ public class BluetoothLeService extends Service {
     public static final String ACTION_SCAN_STOPPED =
             TAG + ".ACTION_SCAN_STOPPED";
 
-    private static HashMap<String, SensorNode> mSensorNodes = new HashMap<String, SensorNode>();
     private LocationManager mLocationManager;
     private LocationSensorData mSenseDataLocationListener;
 
@@ -115,20 +92,7 @@ public class BluetoothLeService extends Service {
 
         mHandler = new Handler();
 
-        if (mBluetoothManager == null) {
-            mBluetoothManager =
-                    (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
-            if (mBluetoothManager == null) {
-                Log.e(TAG, "Unable to initialize BluetoothManager.");
-            }
-        }
-
-        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        if (mBluetoothAdapter == null) {
-            Log.e(TAG, "Unable to obtain a BluetoothAdapter.");
-        }
-
-        mBluetoothLeScanner = mBluetoothAdapter.getBluetoothLeScanner();
+        NodeScanner.getInstance(getApplicationContext()).addNodeScannerListener(mNodeScannerListener);
 
         registerReceiver(mBroadcastReceiver, makeIntentFilter());
 
@@ -160,6 +124,7 @@ public class BluetoothLeService extends Service {
         super.onDestroy();
         Log.d(TAG, "onDestroy()");
         stopScanning();
+        NodeScanner.getInstance(getApplicationContext()).removeNodeScannerListener(mNodeScannerListener);
         unregisterReceiver(mBroadcastReceiver);
         mHandler.removeCallbacks(delayedStartScanning);
     }
@@ -174,117 +139,16 @@ public class BluetoothLeService extends Service {
 
     @Override
     public boolean onUnbind(Intent intent) {
-        for (SensorNode node : mSensorNodes.values()) {
-            mSensorNodes.remove(node.getRemoteDeviceName());
-            node.disconnect();
-        }
+        NodeScanner.getInstance(getApplicationContext()).removeAndDisconnectNodes();
         return super.onUnbind(intent);
     }
 
     public void startScanning() {
-        Log.d(TAG, "startScanning()");
-
-        ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                .setReportDelay(100)
-                .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
-                .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
-                .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
-                .build();
-        List<ScanFilter> filters = new ArrayList<>();
-        ScanFilter scanFilter = new ScanFilter.Builder()
-                .build();
-        filters.add(scanFilter);
-
-        mBluetoothLeScanner.startScan(filters, settings, mScanCallback);
-
-        final Intent intent = new Intent(ACTION_SCANNING);
-        sendBroadcast(intent);
+        NodeScanner.getInstance(getApplicationContext()).startScanning();
     }
 
     public void stopScanning() {
-        Log.i(TAG, "stopScanning()");
-        mBluetoothLeScanner.stopScan(mScanCallback);
-        final Intent intent = new Intent(ACTION_SCAN_STOPPED);
-        sendBroadcast(intent);
-        startSynchronizationOfSensorNode();
-    }
-
-    private final ScanCallback mScanCallback = new ScanCallback() {
-        @Override
-        public void onScanResult(int callbackType, ScanResult result) {
-            super.onScanResult(callbackType, result);
-
-            Log.d(TAG, "onScanResult(): "
-                    + result.getDevice().getName()
-                    + result.getDevice().getAddress());
-        }
-
-        @Override
-        public void onBatchScanResults(List<ScanResult> results) {
-            super.onBatchScanResults(results);
-            Log.d(TAG, "onBatchScanResults()");
-
-            for(ScanResult result: results) {
-
-                SensorNode sensorNode = null;
-
-                if(mSensorNodes.containsKey(result.getDevice().getAddress())) {
-                    sensorNode = mSensorNodes.get(result.getDevice().getAddress());
-                    assert sensorNode != null;
-                    sensorNode.initialize(result);
-                }
-
-                else if (result.getScanRecord().getDeviceName() != null
-                        && checkEddystoneServiceUuids(result)) {
-                    sensorNode = new SensorNode(getBaseContext());
-                    sensorNode.initialize(result);
-                    mSensorNodes.put(sensorNode.getRemoteDeviceName(), sensorNode);
-                    Log.d(TAG, "Found compatible eddstone URI " + sensorNode.getRemoteDeviceName());
-                }
-
-                if (sensorNode != null) {
-                    final Intent intent = new Intent(ACTION_SENSOR_NODE_FOUND);
-                    sendBroadcast(intent);
-                }
-            }
-        }
-
-        @Override
-        public void onScanFailed(int errorCode) {
-            super.onScanFailed(errorCode);
-            Log.i(TAG, "onScanFailed()");
-        }
-    };
-
-    private void startSynchronizationOfSensorNode() {
-
-        long now = Instant.now().getEpochSecond() - 3600;
-
-        for (SensorNode node: mSensorNodes.values()) {
-            if (node.isConnected()) {
-                return;
-            }
-        }
-
-        for (SensorNode sensorNode: mSensorNodes.values()) {
-            if (sensorNode.getTimeLastSync() < now) {
-                sensorNode.connectAndSyncData();
-                return;
-            }
-        }
-    }
-
-    public static List<SensorNode> getSensorNodeList() {
-        ArrayList<SensorNode> sensorNodes = new ArrayList(mSensorNodes.values());
-
-        sensorNodes.sort((s1, s2) -> {
-            if (s1.getRssi() == s2.getRssi()) {
-                return 0;
-            }
-            return s1.getRssi() > s2.getRssi() ? -1 : 1; // if you want to short by name
-        });
-        return sensorNodes;
+        NodeScanner.getInstance(getApplicationContext()).stopScanning();
     }
 
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
@@ -295,25 +159,17 @@ public class BluetoothLeService extends Service {
             Log.d(TAG, "onReceive()");
 
             if (action.equals(MainActivity.ACTION_START_SCAN)) {
-                if (mBluetoothLeScanner == null)
-                    mBluetoothLeScanner = mBluetoothAdapter.getBluetoothLeScanner();
-                if (mBluetoothAdapter.isEnabled()) {
-                    startScanning();
-                    delayedStopScanning.run();
-                }
+                startScanning();
                 return;
             }
 
             if (action.equals(MainActivity.ACTION_STOP_SCAN)) {
-                if (mBluetoothLeScanner == null)
-                    return;
-                if (mBluetoothAdapter.isEnabled())
-                    stopScanning();
+                stopScanning();
                 return;
             }
 
             if (action.equals(SensorNode.ACTION_GATT_DISCONNECTED)) {
-                startSynchronizationOfSensorNode();
+                //TODO
             }
         }
     };
@@ -325,6 +181,27 @@ public class BluetoothLeService extends Service {
         intentFilter.addAction(SensorNode.ACTION_GATT_DISCONNECTED);
         return intentFilter;
     }
+
+    private NodeScannerListener mNodeScannerListener = new NodeScannerListener() {
+
+        @Override
+        public void scanStarted() {
+            final Intent intent = new Intent(ACTION_SCANNING);
+            sendBroadcast(intent);
+        }
+
+        @Override
+        public void scanStopped() {
+            final Intent intent = new Intent(ACTION_SCAN_STOPPED);
+            sendBroadcast(intent);
+        }
+
+        @Override
+        public void foundNode() {
+            final Intent intent = new Intent(ACTION_SENSOR_NODE_FOUND);
+            sendBroadcast(intent);
+        }
+    };
 
     private class LocationSensorData implements LocationListener {
 
@@ -423,35 +300,5 @@ public class BluetoothLeService extends Service {
 
             return bObjects;
         }
-    }
-
-    private boolean checkEddystoneServiceUuids(ScanResult result) {
-
-        if (result.getScanRecord().getServiceUuids() == null)
-            return false;
-
-        for (ParcelUuid serviceUuid: result.getScanRecord().getServiceUuids()) {
-            if (serviceUuid.getUuid().compareTo(UUID_EDDYSTONE) == 0) {
-                byte[] data = result.getScanRecord().getServiceData(serviceUuid);
-                byte frameType = data[0];
-
-                if(frameType != 0x10) {
-                    return false;
-                }
-
-                String uri_ = new String(data, 2, data.length - 2);
-
-                Log.d(TAG, result.getDevice().getAddress()
-                        + ": " + serviceUuid.getUuid().toString()
-                        + " = " + uri_);
-
-                if (uri_.compareTo(URI_EDDYSTONE_AFARCLOUD) == 0)
-                    return true;
-                if (uri_.compareTo(URI_EDDYSTONE_DIGIDRIP) == 0)
-                    return true;
-            }
-        }
-
-        return false;
     }
 }

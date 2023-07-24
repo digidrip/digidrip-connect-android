@@ -73,16 +73,11 @@ public class SensorNode {
     private float mTempValue = 0.0f;
     private int mMoistureValue = 0;
 
-    private int mConnectionState = STATE_DISCONNECTED;
+    private int mConnectionState = BluetoothProfile.STATE_DISCONNECTED;
 
     private boolean mSyncFinished = false;
 
     private long mTimeLastSync = 0;
-
-    private static final int STATE_DISCONNECTED = 0;
-    private static final int STATE_CONNECTING = 1;
-    private static final int STATE_CONNECTED = 2;
-    private static final int STATE_DISCONNECTING = 0;
 
     private boolean mSyncEnabled = true;
     private boolean mIsSynchronizing = false;
@@ -128,8 +123,6 @@ public class SensorNode {
 
     public final static String ACTION_PUBLISH_ATTRIBUTE =
             TAG + ".ACTION_PUBLISH_ATTRIBUTE";
-    public final static String ACTION_PUBLISH_TELEMETRY =
-            TAG + ".ACTION_PUBLISH_TELEMETRY";
 
     public SensorNode(Context context) {
         mContext = context;
@@ -155,11 +148,11 @@ public class SensorNode {
                 mAbortDataSynchronization = true;
                 mHandler.postDelayed(this::disconnect, 1000);
             }
-            if(mConnectionState != STATE_DISCONNECTED)
+            if(mConnectionState != BluetoothProfile.STATE_DISCONNECTED)
                 return;
             mBluetoothGatt = mScanResult.getDevice().connectGatt(mContext,
                     false, getGattCallback(), BluetoothDevice.TRANSPORT_LE);
-            mConnectionState = STATE_CONNECTING;
+            mConnectionState = BluetoothProfile.STATE_CONNECTING;
             if (mBluetoothGatt.connect()) {
                 Log.i(TAG, "connecting to " + mScanResult.getDevice().getAddress());
             } else {
@@ -173,12 +166,12 @@ public class SensorNode {
     public void connectAndSyncTime() throws SecurityException {
         mHandler.post(() -> {
 
-            if(mConnectionState != STATE_DISCONNECTED)
+            if(mConnectionState != BluetoothProfile.STATE_DISCONNECTED)
                 return;
 
             mBluetoothGatt = mScanResult.getDevice().connectGatt(mContext,
                     false, new BluetoothSyncTimeGattCallback(), BluetoothDevice.TRANSPORT_LE);
-            mConnectionState = STATE_CONNECTING;
+            mConnectionState = BluetoothProfile.STATE_CONNECTING;
             if (mBluetoothGatt.connect()) {
                 Log.i(TAG, "connecting to " + mScanResult.getDevice().getAddress());
             } else {
@@ -192,10 +185,10 @@ public class SensorNode {
     public void disconnect() throws SecurityException {
         Log.d(TAG, "disconnecting; state = " + mConnectionState);
 
-        if(mConnectionState == STATE_DISCONNECTED || mConnectionState == STATE_DISCONNECTING)
+        if(mConnectionState == BluetoothProfile.STATE_DISCONNECTED || mConnectionState == BluetoothProfile.STATE_DISCONNECTING)
             return;
 
-        mConnectionState = STATE_DISCONNECTING;
+        mConnectionState = BluetoothProfile.STATE_DISCONNECTING;
 
         mHandler.post(() -> {
             mBluetoothGatt.disconnect();
@@ -226,7 +219,9 @@ public class SensorNode {
 
             Intent intent = new Intent();
 
-            if(newState == BluetoothProfile.STATE_CONNECTED) {
+            Log.d(TAG, "onConnectionStateChange() - status=" + status + " newState=" + newState);
+
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
                 mTsConnectStart = System.currentTimeMillis();
 
                 Log.i(TAG, "connected to " + getRemoteDeviceName());
@@ -241,9 +236,9 @@ public class SensorNode {
                 intent.putExtra(EXTRA_DATA_DEVICE_ADDRESS, gatt.getDevice().getAddress());
                 mContext.sendBroadcast(intent);
 
-            } else if(newState == BluetoothProfile.STATE_DISCONNECTED) {
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.i(TAG, "disconnected from " + getRemoteDeviceName() + " (status: " + status + ")");
-                if ((mConnectionState == STATE_CONNECTED)
+                if ((mConnectionState == BluetoothProfile.STATE_CONNECTED)
                         && reconnectAttempts < 3) {
                     reconnectAttempts++;
                     mConnectionState = newState;
@@ -332,7 +327,8 @@ public class SensorNode {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.w(TAG, "failed to increase MTU size");
             }
-            mBluetoothGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
+            // TODO: check BluetoothGatt.onConnectionUpdate()!!!
+            //mBluetoothGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
             connectToNotifications();
         }
 
@@ -874,7 +870,7 @@ public class SensorNode {
             broadcastStateChanged();
         }
 
-        mBluetoothGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
+        //mBluetoothGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
 
         BluetoothGattDescriptor desc = mSyncCharacteristics.getDescriptor(UUIDCollection.GATT_DDD);
         if(mBluetoothGatt.setCharacteristicNotification(mSyncCharacteristics, true)) {
@@ -1081,12 +1077,7 @@ public class SensorNode {
     }
 
     public void publishMqttDeviceTelemetry(String jsonTelemetry) {
-        Intent intent = new Intent(ACTION_PUBLISH_TELEMETRY);
-
-        intent.putExtra(EXTRA_DATA_JSON_STRING,
-                jsonTelemetry);
-
-        mContext.sendBroadcast(intent);
+        NodeSyncClient.getInstance(mContext).publishTelemetryMessage(jsonTelemetry);
     }
 
     public String getRemoteDeviceName() {
@@ -1097,7 +1088,7 @@ public class SensorNode {
     }
 
     public boolean isConnected() {
-        return mConnectionState == STATE_CONNECTED;
+        return mConnectionState == BluetoothProfile.STATE_CONNECTED;
     }
 
     public boolean isSynchronizing() {
@@ -1130,12 +1121,14 @@ public class SensorNode {
         }
 
         switch(mConnectionState) {
-            case STATE_DISCONNECTED:
-                return  R.string.disconnected;
-            case STATE_CONNECTING:
+            case BluetoothProfile.STATE_CONNECTING:
                 return R.string.connecting;
-            case STATE_CONNECTED:
+            case BluetoothProfile.STATE_CONNECTED:
                 return R.string.connected;
+            case BluetoothProfile.STATE_DISCONNECTING:
+                return R.string.disconnecting;
+            case BluetoothProfile.STATE_DISCONNECTED:
+                return  R.string.disconnected;
         }
 
         return R.string.undefinied;

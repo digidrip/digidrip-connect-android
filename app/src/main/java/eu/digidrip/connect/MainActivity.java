@@ -24,14 +24,26 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.DividerItemDecoration;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.work.Constraints;
+import androidx.work.ExistingPeriodicWorkPolicy;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkManager;
+import androidx.work.WorkRequest;
 
 import java.util.ArrayList;
+import java.util.concurrent.TimeUnit;
 
+@RequiresApi(api = Build.VERSION_CODES.S)
 public class MainActivity extends AppCompatActivity {
     private final static String TAG = MainActivity.class.getSimpleName();
 
@@ -40,9 +52,6 @@ public class MainActivity extends AppCompatActivity {
     public final static String ACTION_MQTT_CREDENTIALS_UPDATED =
             TAG + ".ACTION_MQTT_CREDENTIALS_UPDATED";
     public final static String ACTION_MQTT_CONNECT = TAG + ".ACTION_MQTT_CONNECT";
-
-    private static final int PERMISSION_REQUEST_COARSE_LOCATION = 456;
-    private static final int PERMISSION_REQUEST_FINE_LOCATION = 375;
     private static final int PERMISSION_ENABLE_BT = 1;
 
     private static SensorNodeAdapater mSensorNodeAdapter;
@@ -51,6 +60,15 @@ public class MainActivity extends AppCompatActivity {
 
     private View.OnClickListener mBtnScanStartListener;
     private View.OnClickListener mBtnScanStopListener;
+
+    private static final String[] PERMISSIONS_LOCATION = {
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_LOCATION_EXTRA_COMMANDS,
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_PRIVILEGED
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -115,6 +133,26 @@ public class MainActivity extends AppCompatActivity {
         }
 
         askMqttCredentials(false);
+
+        Constraints constraints = new Constraints();
+        constraints.requiresBatteryNotLow();
+        PeriodicWorkRequest periodicScanWorkRequest = new PeriodicWorkRequest.Builder(
+                ScanWorker.class, 15, TimeUnit.MINUTES)
+                // Constraints
+                .setConstraints(constraints)
+                .build();
+        PeriodicWorkRequest periodicSyncWorkRequest = new PeriodicWorkRequest.Builder(
+                SynchronizationWorker.class, 15, TimeUnit.MINUTES)
+                // Constraints
+                .setConstraints(constraints)
+                .build();
+
+        WorkManager.getInstance(getApplicationContext()).enqueueUniquePeriodicWork(
+                NodeScanner.TAG,
+                ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, periodicScanWorkRequest);
+        WorkManager.getInstance(getApplicationContext()).enqueueUniquePeriodicWork(
+                NodeSyncClient.TAG,
+                ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, periodicSyncWorkRequest);
     }
 
     @Override
@@ -145,38 +183,42 @@ public class MainActivity extends AppCompatActivity {
 
     private void sendStartBleScanBroadcast() {
         Log.d(TAG, "sendStartBleScanBroadcast");
-        Intent intent = new Intent(ACTION_START_SCAN);
-        sendBroadcast(intent);
+        NodeScanner.getInstance(getApplicationContext()).startScanning();
     }
 
     private void sendStopBleScanBroadcast() {
         Log.d(TAG, "sendStopBleScanBroadcast");
-        Intent intent = new Intent(ACTION_STOP_SCAN);
-        sendBroadcast(intent);
+        NodeScanner.getInstance(getApplicationContext()).stopScanning();
     }
 
+    ActivityResultLauncher<Intent> activityResultLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == Activity.RESULT_OK) {
+                    Log.e(TAG,"activityResultLauncher: OK");
+                }
+            });
+
     private void checkForBlePermissions() {
+
+        // check if location permissions are granted
+        if(ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) !=
+                PackageManager.PERMISSION_GRANTED) {
+
+            ActivityCompat.requestPermissions(
+                    this,
+                    PERMISSIONS_LOCATION,
+                    1
+            );
+        }
+
         // check if bluetooth is enabled
         BluetoothAdapter bluetoothAdapter =
                 ((BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE)).getAdapter();
 
         if(bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
-            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-            startActivityForResult(enableBtIntent, PERMISSION_ENABLE_BT);
-        }
-
-        // check if location permissions are granted
-        if(this.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) !=
-                PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
-                    PERMISSION_REQUEST_COARSE_LOCATION);
-        }
-
-        // check if location permissions are granted
-        if(this.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
-                PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
-                    PERMISSION_REQUEST_FINE_LOCATION);
+            Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            activityResultLauncher.launch(intent);
         }
     }
 
@@ -200,7 +242,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (id == R.id.action_connect_mqtt) {
-            sendMqttConnectBroadcast();
+            NodeSyncClient.getInstance(getApplicationContext()).connect();
             return true;
         }
 
@@ -230,26 +272,21 @@ public class MainActivity extends AppCompatActivity {
     private void askMqttCredentials(boolean force) {
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
 
-        if(!preferences.contains(MqttGatewayService.MQTT_CLIENT_ACCESS_TOKEN) || force) {
+        if(!preferences.contains(NodeSyncClient.MQTT_CLIENT_ACCESS_TOKEN) || force) {
             openMqttClientAccessTokenSettingsDialog();
         }
 
-        if(!preferences.contains(MqttGatewayService.MQTT_CLIENT_ID) || force) {
+        if(!preferences.contains(NodeSyncClient.MQTT_CLIENT_ID) || force) {
             //openMqttClientIdSettingsDialog();
         }
 
-        if(!preferences.contains(MqttGatewayService.MQTT_SERVER_URI) || force) {
+        if(!preferences.contains(NodeSyncClient.MQTT_SERVER_URI) || force) {
             openMqttServerUriSettingsDialog();
         }
     }
 
     private void sendMqttCredentialsUpdatedBroadcast() {
         Intent intent = new Intent(ACTION_MQTT_CREDENTIALS_UPDATED);
-        sendBroadcast(intent);
-    }
-
-    private void sendMqttConnectBroadcast() {
-        Intent intent = new Intent(ACTION_MQTT_CONNECT);
         sendBroadcast(intent);
     }
 
@@ -262,7 +299,7 @@ public class MainActivity extends AppCompatActivity {
 
             if(BluetoothLeService.ACTION_SENSOR_NODE_FOUND.equals(action)) {
                 Log.d(TAG, "received BluetoothLeService.ACTION_SENSOR_NODE_FOUND");
-                mSensorNodeAdapter.setSensorNodeList(BluetoothLeService.getSensorNodeList());
+                mSensorNodeAdapter.setSensorNodeList(NodeScanner.getSensorNodeList());
                 mSensorNodeAdapter.notifyDataSetChanged();
             }
 
@@ -301,7 +338,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void openMqttServerUriSettingsDialog() {
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
-        String uri = preferences.getString(MqttGatewayService.MQTT_SERVER_URI, "tcp://example.com:1883");
+        String uri = preferences.getString(NodeSyncClient.MQTT_SERVER_URI, "tcp://example.com:1883");
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("MQTT Server URI");
@@ -317,7 +354,7 @@ public class MainActivity extends AppCompatActivity {
         builder.setPositiveButton(R.string.ok, (dialog, which) -> {
             SharedPreferences preferences1 = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
             SharedPreferences.Editor editor = preferences1.edit();
-            editor.putString(MqttGatewayService.MQTT_SERVER_URI, input.getText().toString()); // value to store
+            editor.putString(NodeSyncClient.MQTT_SERVER_URI, input.getText().toString()); // value to store
             editor.apply();
 
             sendMqttCredentialsUpdatedBroadcast();
@@ -329,7 +366,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void openMqttClientIdSettingsDialog() {
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
-        String clientId = preferences.getString(MqttGatewayService.MQTT_CLIENT_ID,
+        String clientId = preferences.getString(NodeSyncClient.MQTT_CLIENT_ID,
                 "digidrip_connect_" + System.currentTimeMillis());
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -346,7 +383,7 @@ public class MainActivity extends AppCompatActivity {
         builder.setPositiveButton(R.string.ok, (dialog, which) -> {
             SharedPreferences preferences1 = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
             SharedPreferences.Editor editor = preferences1.edit();
-            editor.putString(MqttGatewayService.MQTT_CLIENT_ID, input.getText().toString()); // value to store
+            editor.putString(NodeSyncClient.MQTT_CLIENT_ID, input.getText().toString()); // value to store
             editor.apply();
 
             sendMqttCredentialsUpdatedBroadcast();
@@ -358,7 +395,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void openMqttClientAccessTokenSettingsDialog() {
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
-        String accessToken = preferences.getString(MqttGatewayService.MQTT_CLIENT_ACCESS_TOKEN,
+        String accessToken = preferences.getString(NodeSyncClient.MQTT_CLIENT_ACCESS_TOKEN,
                 "");
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -375,7 +412,7 @@ public class MainActivity extends AppCompatActivity {
         builder.setPositiveButton(R.string.ok, (dialog, which) -> {
             SharedPreferences preferences1 = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
             SharedPreferences.Editor editor = preferences1.edit();
-            editor.putString(MqttGatewayService.MQTT_CLIENT_ACCESS_TOKEN, input.getText().toString()); // value to store
+            editor.putString(NodeSyncClient.MQTT_CLIENT_ACCESS_TOKEN, input.getText().toString()); // value to store
             editor.apply();
 
             sendMqttCredentialsUpdatedBroadcast();

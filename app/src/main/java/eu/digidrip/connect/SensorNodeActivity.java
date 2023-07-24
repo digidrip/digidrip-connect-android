@@ -41,7 +41,7 @@ public class SensorNodeActivity extends AppCompatActivity {
 
         Bundle extras = getIntent().getExtras();
 
-        mSensorNode = BluetoothLeService.getSensorNodeList().get(extras.getInt("position"));
+        mSensorNode = NodeScanner.getSensorNodeList().get(extras.getInt("position"));
 
         TextView nameText = (TextView) findViewById(R.id.sensor_node_name);
         nameText.setText(mSensorNode.getRemoteDeviceName());

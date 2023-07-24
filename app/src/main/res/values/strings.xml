@@ -30,6 +30,7 @@
     <string name="connected">connected</string>
     <string name="connecting">connecting</string>
     <string name="disconnected">disconnected</string>
+    <string name="disconnecting">disconnecting</string>
     <string name="synchronizing">synchronizing</string>
     <string name="sync_failed">synchronization failed</string>
     <string name="undefinied">undefined</string>
