@@ -192,7 +192,6 @@ public class SensorNode {
 
         mHandler.post(() -> {
             mBluetoothGatt.disconnect();
-            mBluetoothGatt.close();
         });
 
         mCTSCharacteristics = null;
@@ -219,7 +218,9 @@ public class SensorNode {
 
             Intent intent = new Intent();
 
-            Log.d(TAG, "onConnectionStateChange() - status=" + status + " newState=" + newState);
+            Log.d(TAG, "onConnectionStateChange() - status=" + status
+                    + " newState=" + newState
+                    + " oldState=" + mConnectionState);
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 mTsConnectStart = System.currentTimeMillis();
@@ -252,6 +253,8 @@ public class SensorNode {
                 intent.setAction(ACTION_GATT_DISCONNECTED);
                 intent.putExtra(EXTRA_DATA_DEVICE_ADDRESS, gatt.getDevice().getAddress());
                 mContext.sendBroadcast(intent);
+
+                NodeScanner.getInstance(mContext).synchronizeSensorNode();
 
             } else {
                 Log.e(TAG, "other error, new state of "

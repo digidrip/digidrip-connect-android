@@ -134,7 +134,7 @@ public class NodeScanner {
     public void stopScanning() {
         Log.i(TAG, "stopScanning()");
         mBluetoothLeScanner.stopScan(mScanCallback);
-        startSynchronizationOfSensorNode();
+        synchronizeSensorNode();
 
         for (NodeScannerListener listener: mNodeScannerListeners) {
             listener.scanStopped();
@@ -189,7 +189,7 @@ public class NodeScanner {
         }
     };
 
-    private void startSynchronizationOfSensorNode() {
+    public void synchronizeSensorNode() {
 
         long now = Instant.now().getEpochSecond() - 3600;
 
