@@ -1,11 +1,17 @@
 <resources>
 
+    <style name="Theme.SplashScreen.digidrip" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/dripblue</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_d_white_small</item>
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
+    </style>
+
     <!-- Base application theme. -->
     <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
         <!-- Customize your theme here. -->
-        <item name="colorPrimary">@color/colorPrimary</item>
-        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
-        <item name="colorAccent">@color/colorAccent</item>
+        <item name="colorPrimary">@color/dripblue</item>
+        <item name="colorPrimaryDark">@color/dripblue</item>
+        <item name="colorAccent">@color/growgreen</item>
     </style>
 
 </resources>

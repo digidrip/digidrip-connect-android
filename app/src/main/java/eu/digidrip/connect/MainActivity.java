@@ -23,13 +23,14 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.ToggleButton;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
+import androidx.core.splashscreen.SplashScreen;
 import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.DividerItemDecoration;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -38,7 +39,6 @@ import androidx.work.Constraints;
 import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
-import androidx.work.WorkRequest;
 
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
@@ -52,9 +52,12 @@ public class MainActivity extends AppCompatActivity {
     public final static String ACTION_MQTT_CREDENTIALS_UPDATED =
             TAG + ".ACTION_MQTT_CREDENTIALS_UPDATED";
     public final static String ACTION_MQTT_CONNECT = TAG + ".ACTION_MQTT_CONNECT";
+
+    public final static String PREFERENCE_AUTO_SCAN = TAG + ".PREFERENCE_AUTO_SCAN";
+    public final static String PREFERENCE_AUTO_SYNC = TAG + ".PREFERENCE_AUTO_SYNC";
     private static final int PERMISSION_ENABLE_BT = 1;
 
-    private static SensorNodeAdapater mSensorNodeAdapter;
+    private static NodeAdapater mSensorNodeAdapter;
     private static Intent mBleServiceIntent;
     private static Intent mMqttServiceIntent;
 
@@ -76,12 +79,13 @@ public class MainActivity extends AppCompatActivity {
         Log.d(TAG, "Build.VERSION.SDK_INT = " + Build.VERSION.SDK_INT);
 
         super.onCreate(savedInstanceState);
+        SplashScreen.installSplashScreen(this);
         setContentView(R.layout.activity_main);
 
         RecyclerView recyclerView = findViewById(R.id.sensor_list);
 
         if(savedInstanceState == null) {
-            mSensorNodeAdapter = new SensorNodeAdapater(new ArrayList<>());
+            mSensorNodeAdapter = new NodeAdapater(new ArrayList<>());
         }
 
         RecyclerView.LayoutManager mLayoutManager = new LinearLayoutManager(getApplicationContext());
@@ -89,18 +93,18 @@ public class MainActivity extends AppCompatActivity {
         recyclerView.setItemAnimator(new DefaultItemAnimator());
         recyclerView.addItemDecoration(new DividerItemDecoration(this, LinearLayoutManager.VERTICAL));
         recyclerView.setAdapter(mSensorNodeAdapter);
-        recyclerView.addOnItemTouchListener(new SensorNodeTouchListener(getApplicationContext(),
-                recyclerView, new SensorNodeTouchListener.ClickListener() {
+        recyclerView.addOnItemTouchListener(new NodeTouchListener(getApplicationContext(),
+                recyclerView, new NodeTouchListener.ClickListener() {
             @Override
             public void onClick(View view, int position) {
-                Intent i = new Intent(MainActivity.this, SensorNodeActivity.class);
+                Intent i = new Intent(MainActivity.this, NodeActivity.class);
                 i.putExtra("position", position);
-                //startActivity(i);
+                startActivity(i);
             }
 
             @Override
             public void onLongClick(View view, int position) {
-                Intent i = new Intent(MainActivity.this, SensorNodeActivity.class);
+                Intent i = new Intent(MainActivity.this, NodeActivity.class);
                 i.putExtra("position", position);
                 //startActivity(i);
             }
@@ -117,7 +121,38 @@ public class MainActivity extends AppCompatActivity {
         };
 
         Button btn = findViewById(R.id.scan_nodes);
-        btn.setOnClickListener(mBtnScanStartListener);
+        if (getAutoScanPreference()) {
+            btn.setOnClickListener(mBtnScanStopListener);
+        } else {
+            btn.setOnClickListener(mBtnScanStartListener);
+        }
+
+        final Boolean autoScan = getAutoScanPreference();
+        final Boolean autoSync = getAutoSyncPreference();
+
+        ToggleButton tbtn = findViewById(R.id.tb_auto_scan);
+        tbtn.setChecked(autoScan);
+        tbtn.setText(autoScan == true ? R.string.auto_scan_on : R.string.auto_scan_off);
+        tbtn.setOnClickListener(view -> {
+            ToggleButton vtbtn = view.findViewById(R.id.tb_auto_scan);
+            vtbtn.setText(vtbtn.isChecked() == true ? R.string.auto_scan_on : R.string.auto_scan_off);
+            SharedPreferences.Editor editor = PreferenceManager.getDefaultSharedPreferences(
+                    getApplicationContext()).edit();
+            editor.putBoolean(PREFERENCE_AUTO_SCAN, vtbtn.isChecked());
+            editor.apply();
+        });
+
+        tbtn = findViewById(R.id.tb_auto_sync);
+        tbtn.setChecked(autoSync);
+        tbtn.setText(autoSync == true ? R.string.auto_sync_on : R.string.auto_sync_off);
+        tbtn.setOnClickListener(view -> {
+            ToggleButton vtbtn = view.findViewById(R.id.tb_auto_sync);
+            vtbtn.setText(vtbtn.isChecked() == true ? R.string.auto_sync_on : R.string.auto_sync_off);
+            SharedPreferences.Editor editor = PreferenceManager.getDefaultSharedPreferences(
+                    getApplicationContext()).edit();
+            editor.putBoolean(PREFERENCE_AUTO_SYNC, vtbtn.isChecked());
+            editor.apply();
+        });
 
         registerReceiver(mGattUpdateReceiver, makeUpdateIntentFilter());
 
@@ -129,7 +164,6 @@ public class MainActivity extends AppCompatActivity {
 
         if(savedInstanceState == null) {
             checkForBlePermissions();
-            //sendStartBleScanBroadcast();
         }
 
         askMqttCredentials(false);
@@ -147,12 +181,21 @@ public class MainActivity extends AppCompatActivity {
                 .setConstraints(constraints)
                 .build();
 
-        WorkManager.getInstance(getApplicationContext()).enqueueUniquePeriodicWork(
-                NodeScanner.TAG,
-                ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, periodicScanWorkRequest);
-        WorkManager.getInstance(getApplicationContext()).enqueueUniquePeriodicWork(
-                NodeSyncClient.TAG,
-                ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, periodicSyncWorkRequest);
+        if (getAutoSyncPreference()) {
+            WorkManager.getInstance(getApplicationContext()).enqueueUniquePeriodicWork(
+                    NodeScanner.TAG,
+                    ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, periodicScanWorkRequest);
+            WorkManager.getInstance(getApplicationContext()).enqueueUniquePeriodicWork(
+                    NodeSyncClient.TAG,
+                    ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, periodicSyncWorkRequest);
+        } else {
+            WorkManager.getInstance(getApplicationContext()).cancelUniqueWork(NodeScanner.TAG);
+            WorkManager.getInstance(getApplicationContext()).cancelUniqueWork(NodeSyncClient.TAG);
+        }
+
+        if (getAutoScanPreference()) {
+            sendStartBleScanBroadcast();
+        }
     }
 
     @Override
@@ -165,9 +208,21 @@ public class MainActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == PERMISSION_ENABLE_BT) {
             if (resultCode == Activity.RESULT_OK) {
-                //sendStartBleScanBroadcast();
+                if (getAutoScanPreference()) {
+                    sendStartBleScanBroadcast();
+                }
             }
         }
+    }
+
+    public boolean getAutoSyncPreference() {
+        return PreferenceManager.getDefaultSharedPreferences(
+                getApplicationContext()).getBoolean(PREFERENCE_AUTO_SYNC, false);
+    }
+
+    public boolean getAutoScanPreference() {
+        return PreferenceManager.getDefaultSharedPreferences(
+                getApplicationContext()).getBoolean(PREFERENCE_AUTO_SCAN, false);
     }
 
     @Override
@@ -183,7 +238,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void sendStartBleScanBroadcast() {
         Log.d(TAG, "sendStartBleScanBroadcast");
-        NodeScanner.getInstance(getApplicationContext()).startScanning();
+        if (NodeScanner.getInstance(getApplicationContext()).startScanning()) {
+            Button btn = findViewById(R.id.scan_nodes);
+            btn.setText(R.string.scanning);
+            btn.setOnClickListener(mBtnScanStopListener);
+        }
     }
 
     private void sendStopBleScanBroadcast() {
@@ -196,6 +255,9 @@ public class MainActivity extends AppCompatActivity {
             result -> {
                 if (result.getResultCode() == Activity.RESULT_OK) {
                     Log.e(TAG,"activityResultLauncher: OK");
+                    if (getAutoScanPreference()) {
+                        sendStartBleScanBroadcast();
+                    }
                 }
             });
 
@@ -261,10 +323,10 @@ public class MainActivity extends AppCompatActivity {
         intentFilter.addAction(MqttGatewayService.ACTION_CONNECTION_STATUS_CHANGED);
         intentFilter.addAction(MqttGatewayService.ACTION_PENDING_MESSAGES_CHANGED);
 
-        intentFilter.addAction(SensorNode.ACTION_STATE_CHANGED);
-        intentFilter.addAction(SensorNode.ACTION_GATT_READ_BATTERY);
-        intentFilter.addAction(SensorNode.ACTION_GATT_READ_TEMPERATURE);
-        intentFilter.addAction(SensorNode.ACTION_GATT_READ_MOISTURE);
+        intentFilter.addAction(Node.ACTION_STATE_CHANGED);
+        intentFilter.addAction(Node.ACTION_GATT_READ_BATTERY);
+        intentFilter.addAction(Node.ACTION_GATT_READ_TEMPERATURE);
+        intentFilter.addAction(Node.ACTION_GATT_READ_MOISTURE);
 
         return intentFilter;
     }
@@ -330,7 +392,7 @@ public class MainActivity extends AppCompatActivity {
                 tv.setText("" + pendingMessages + " messages");
             }
 
-            if(SensorNode.ACTION_STATE_CHANGED.equals(action)) {
+            if(Node.ACTION_STATE_CHANGED.equals(action)) {
                 mSensorNodeAdapter.notifyDataSetChanged();
             }
         }

@@ -12,9 +12,9 @@ import androidx.recyclerview.widget.RecyclerView;
 import java.time.Instant;
 import java.util.List;
 
-public class SensorNodeAdapater extends RecyclerView.Adapter<SensorNodeAdapater.MyViewHolder> {
+public class NodeAdapater extends RecyclerView.Adapter<NodeAdapater.MyViewHolder> {
 
-    private List<SensorNode> sensorNodeList;
+    private List<Node> nodeList;
 
     public static class MyViewHolder extends RecyclerView.ViewHolder {
         public TextView title, address, status;
@@ -29,40 +29,40 @@ public class SensorNodeAdapater extends RecyclerView.Adapter<SensorNodeAdapater.
         }
     }
 
-    public SensorNodeAdapater(List<SensorNode> sensorNodeList) {
-        this.sensorNodeList = sensorNodeList;
+    public NodeAdapater(List<Node> nodeList) {
+        this.nodeList = nodeList;
     }
 
     @NonNull
     @Override
     public MyViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
         View itemView = LayoutInflater.from(parent.getContext())
-                .inflate(R.layout.sensor_node_list_row, parent, false);
+                .inflate(R.layout.listrow_node, parent, false);
 
         return new MyViewHolder(itemView);
     }
 
     @Override
     public void onBindViewHolder(MyViewHolder holder, int position) {
-        SensorNode sensorNode = sensorNodeList.get(position);
+        Node node = nodeList.get(position);
 
-        holder.title.setText(sensorNode.getRemoteDeviceName());
-        holder.address.setText("RSSI: " + sensorNode.getRssi());
-        holder.status.setText(sensorNode.getStateString());
+        holder.title.setText(node.getRemoteDeviceName());
+        holder.address.setText("RSSI: " + node.getRssi());
+        holder.status.setText(node.getStateString());
 
-        if (sensorNode.getStateStringId() == R.string.connecting
-            || sensorNode.getStateStringId() == R.string.connected
-            || sensorNode.getStateStringId() == R.string.synchronizing) {
+        if (node.getStateStringId() == R.string.connecting
+            || node.getStateStringId() == R.string.connected
+            || node.getStateStringId() == R.string.synchronizing) {
             holder.statusIcon.setImageResource(R.drawable.ic_sync_blue_24dp);
             return;
         }
 
-        if (sensorNode.getStateStringId() == R.string.sync_failed) {
+        if (node.getStateStringId() == R.string.sync_failed) {
             holder.statusIcon.setImageResource(R.drawable.ic_priority_high_red_24dp);
             return;
         }
 
-        if (sensorNode.getTimeLastSync() + 3600 < Instant.now().getEpochSecond()) {
+        if (node.getTimeLastSync() + 3600 < Instant.now().getEpochSecond()) {
             holder.statusIcon.setImageResource(R.drawable.ic_priority_high_red_24dp);
             return;
         }
@@ -72,10 +72,10 @@ public class SensorNodeAdapater extends RecyclerView.Adapter<SensorNodeAdapater.
 
     @Override
     public int getItemCount() {
-        return sensorNodeList.size();
+        return nodeList.size();
     }
 
-    public void setSensorNodeList(List<SensorNode> sensorNodeList) {
-        this.sensorNodeList = sensorNodeList;
+    public void setSensorNodeList(List<Node> nodeList) {
+        this.nodeList = nodeList;
     }
 }

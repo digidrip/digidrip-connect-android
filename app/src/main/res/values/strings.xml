@@ -17,6 +17,7 @@
 
     <!-- Menu items -->
     <string name="Connect">Connect</string>
+    <string name="Connecting">Connecting</string>
     <string name="Disconnect">Disconnect</string>
     <string name="Scan">Scan</string>
     <string name="Stop">Stop</string>
@@ -34,6 +35,27 @@
     <string name="synchronizing">synchronizing</string>
     <string name="sync_failed">synchronization failed</string>
     <string name="undefinied">undefined</string>
+
+    <string name="irrigation_settings">Irrigation settings:</string>
+    <string name="manual">Manual</string>
+    <string name="constant">Constant</string>
+    <string name="hysteresis">Hysteresis</string>
+
+    <string name="refrsh">Refresh</string>
+    <string name="close">Close</string>
+
+    <string name="Server">Server</string>
+    <string name="Pending">Pending:</string>
+
+    <string name="Battery">Battery</string>
+    <string name="Temperature">Temperature</string>
+    <string name="Moisture">Moisture</string>
+    <string name="Actuator">Actuator</string>
+
+    <string name="auto_scan_on">Auto. Scan: on</string>
+    <string name="auto_scan_off">Auto. Scan: off</string>
+    <string name="auto_sync_on">Auto. Sync: on</string>
+    <string name="auto_sync_off">Auto. Sync: off</string>
 
     <string name="menu_mqtt_credentials">Set MQTT Credentials</string>
     <string name="menu_mqtt_connect">Connect to MQTT Broker</string>

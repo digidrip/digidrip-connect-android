@@ -24,13 +24,15 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Stack;
+import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
-public class SensorNode {
+public class Node {
 
-    public static final String TAG = SensorNode.class.getSimpleName();
+    public static final String TAG = Node.class.getSimpleName();
 
     private final Context mContext;
     private final Handler mHandler;
@@ -40,12 +42,8 @@ public class SensorNode {
 
     private BluetoothGatt mBluetoothGatt;
 
-    private BluetoothGattCharacteristic mCTSCharacteristics = null;
-    private BluetoothGattCharacteristic mBASCharacteristics = null;
-    private BluetoothGattCharacteristic mTempCharacteristics = null;
-    private BluetoothGattCharacteristic mHumiCharacteristics = null;
-    private BluetoothGattCharacteristic mSyncCharacteristics = null;
-    private BluetoothGattCharacteristic mNameCharacteristics = null;
+    private HashMap<UUID, BluetoothGattCharacteristic> remoteCharacteristics
+            = new HashMap<>();
 
     private String mDeviceName = null;
 
@@ -54,6 +52,8 @@ public class SensorNode {
     private long mTsCtsCalled;
     private long mTsConnectStart;
     private int  mSyncedDataSets;
+
+    private boolean disconnectedAfterTimeout = false;
 
     private boolean mAbortDataSynchronization = false;
 
@@ -70,8 +70,16 @@ public class SensorNode {
 
     private int mSyncedDataFlags = 0;
 
-    private float mTempValue = 0.0f;
-    private int mMoistureValue = 0;
+    private int batteryValue = 0;
+    private double mTempValue = 0.0;
+    private double mMoistureValue = 0.0;
+    private int actuatorValue;
+
+    private int outputPositionRelative = 0;
+    private int outputPositionAbsolute = 0;
+    private int outputMode = 0;
+    private int outputValueLow = 0;
+    private int outputValueHigh = 0;
 
     private int mConnectionState = BluetoothProfile.STATE_DISCONNECTED;
 
@@ -82,6 +90,8 @@ public class SensorNode {
     private boolean mSyncEnabled = true;
     private boolean mIsSynchronizing = false;
     private boolean mSyncFailed = false;
+
+    private final long RESPONSE_TIMEOUT = 5000;
 
     public final static String ACTION_GATT_CONNECTED =
             TAG + ".ACTION_GATT_CONNECTED";
@@ -118,13 +128,35 @@ public class SensorNode {
     public final static String EXTRA_DATA_MOISTURE =
             TAG + ".EXTRA_DATA_MOISTURE";
 
+    public final static String ACTION_GATT_READ_ACTUATOR_STATE =
+            TAG + ".ACTION_GATT_READ_ACTUATOR_STATE";
+    public final static String EXTRA_DATA_ACTUATOR_POS_RELATIVE =
+            TAG + ".EXTRA_DATA_ACTUATOR_POS_RELATIVE";
+    public final static String EXTRA_DATA_ACTUATOR_POS_ABSOLUTE =
+            TAG + ".EXTRA_DATA_ACTUATOR_POS_ABSOLUTE";
+    public final static String EXTRA_DATA_ACTUATOR_OUTPUT_MODE =
+            TAG + ".EXTRA_DATA_ACTUATOR_OUTPUT_MODE";
+    public final static String EXTRA_DATA_ACTUATOR_OUTPUT_VALUE_LOW =
+            TAG + ".EXTRA_DATA_ACTUATOR_OUTPUT_VALUE_LOW";
+    public final static String EXTRA_DATA_ACTUATOR_OUTPUT_VALUE_HIGH =
+            TAG + ".EXTRA_DATA_ACTUATOR_OUTPUT_VALUE_HIGH";
     public final static String ACTION_STATE_CHANGED =
             TAG + ".ACTION_STATE_CHANGED";
 
     public final static String ACTION_PUBLISH_ATTRIBUTE =
             TAG + ".ACTION_PUBLISH_ATTRIBUTE";
 
-    public SensorNode(Context context) {
+    public final static String ACTION_DATA_AVAILABLE =
+            TAG + ".ACTION_DATA_AVAILABLE";
+
+    private Runnable disconnectRunner = new Runnable() {
+        @Override
+        public void run() {
+            disconnect();
+        }
+    };
+
+    public Node(Context context) {
         mContext = context;
         mHandler = new Handler(mContext.getMainLooper());
     }
@@ -146,10 +178,13 @@ public class SensorNode {
 
             if (isSynchronizing()) {
                 mAbortDataSynchronization = true;
-                mHandler.postDelayed(this::disconnect, 1000);
+                repostDisconnectDelayed(RESPONSE_TIMEOUT);
             }
             if(mConnectionState != BluetoothProfile.STATE_DISCONNECTED)
                 return;
+            if (mBluetoothGatt != null) {
+                mBluetoothGatt.close();
+            }
             mBluetoothGatt = mScanResult.getDevice().connectGatt(mContext,
                     false, getGattCallback(), BluetoothDevice.TRANSPORT_LE);
             mConnectionState = BluetoothProfile.STATE_CONNECTING;
@@ -183,29 +218,25 @@ public class SensorNode {
     }
 
     public void disconnect() throws SecurityException {
-        Log.d(TAG, "disconnecting; state = " + mConnectionState);
+        Log.d(TAG, "disconnecting - state: " + mConnectionState
+                + ", disconnectAfterTimeout: " + disconnectedAfterTimeout);
 
         if(mConnectionState == BluetoothProfile.STATE_DISCONNECTED || mConnectionState == BluetoothProfile.STATE_DISCONNECTING)
             return;
 
         mConnectionState = BluetoothProfile.STATE_DISCONNECTING;
+        mBluetoothGatt.disconnect();
 
-        mHandler.post(() -> {
-            mBluetoothGatt.disconnect();
-        });
+        if (mSensorDataJson != null) {
+            publishMqttDeviceTelemetry(mSensorDataJson.toString());
+            mSensorDataJson = null;
+        }
 
-        mCTSCharacteristics = null;
-        mBASCharacteristics = null;
-        mHumiCharacteristics = null;
-        mTempCharacteristics = null;
-        mSyncCharacteristics = null;
-        mNameCharacteristics = null;
         mReadCharacteristics.empty();
         mAllData = 0;
 
         final Intent intent = new Intent(ACTION_GATT_DISCONNECTED);
         mContext.sendBroadcast(intent);
-
         broadcastStateChanged();
     }
 
@@ -223,6 +254,8 @@ public class SensorNode {
                     + " oldState=" + mConnectionState);
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                repostDisconnectDelayed(RESPONSE_TIMEOUT);
+
                 mTsConnectStart = System.currentTimeMillis();
 
                 Log.i(TAG, "connected to " + getRemoteDeviceName());
@@ -238,23 +271,31 @@ public class SensorNode {
                 mContext.sendBroadcast(intent);
 
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.i(TAG, "disconnected from " + getRemoteDeviceName() + " (status: " + status + ")");
-                if ((mConnectionState == BluetoothProfile.STATE_CONNECTED)
+                Log.i(TAG, "disconnected from " + getRemoteDeviceName()
+                        + " (disconnectedAfterTimeout: " + disconnectedAfterTimeout + ")");
+
+                if ((mConnectionState == BluetoothProfile.STATE_CONNECTED
+                        || mConnectionState == BluetoothProfile.STATE_CONNECTING
+                        || disconnectedAfterTimeout)
                         && reconnectAttempts < 3) {
                     reconnectAttempts++;
                     mConnectionState = newState;
                     Log.i(TAG, "lost connection, trying to reconnect to " + getRemoteDeviceName()
                             + " ("+ reconnectAttempts + ". attempt).");
-                    disconnect();
+                    repostDisconnectNow();
                     connectAndSyncData();
                     return;
                 }
+
                 mConnectionState = newState;
+
                 intent.setAction(ACTION_GATT_DISCONNECTED);
                 intent.putExtra(EXTRA_DATA_DEVICE_ADDRESS, gatt.getDevice().getAddress());
                 mContext.sendBroadcast(intent);
 
-                NodeScanner.getInstance(mContext).synchronizeSensorNode();
+                mTimeLastSync = Instant.now().getEpochSecond();
+                mBluetoothGatt.close();
+                NodeScanner.getInstance(mContext).synchronizeSensorNodes();
 
             } else {
                 Log.e(TAG, "other error, new state of "
@@ -268,12 +309,21 @@ public class SensorNode {
         public void onServicesDiscovered(BluetoothGatt gatt, int status) throws SecurityException {
             super.onServicesDiscovered(gatt, status);
 
+            repostDisconnectDelayed(RESPONSE_TIMEOUT);
+
             if(status == BluetoothGatt.GATT_SUCCESS) {
+
+                remoteCharacteristics = new HashMap<>();
 
                 for (BluetoothGattService service: gatt.getServices()) {
 
+                    for (BluetoothGattCharacteristic characteristic: service.getCharacteristics()) {
+                        remoteCharacteristics.put(characteristic.getUuid(), characteristic);
+                    }
+
                     Log.i(TAG, "found gatt services " + service.getUuid());
 
+                    /*
                     if (service.getUuid().compareTo(UUIDCollection.CTS_SERVICE) == 0) {
                         mCTSCharacteristics = service.getCharacteristic(UUIDCollection.CTS_CHARACTERISTICS);
 
@@ -304,14 +354,16 @@ public class SensorNode {
                             Log.e(TAG, "could not find ANS characteristic");
                         }
                     }
+
+                     */
                 }
                 mHandler.post(() -> {
-                    if (mSyncCharacteristics == null) {
+                    if (!remoteCharacteristics.containsKey(UUIDs.ASS_CHARACTERISTICS)) {
                         disconnect();
                         mSyncFailed = true;
                         return;
                     }
-                    if (mNameCharacteristics != null) {
+                    if (remoteCharacteristics.containsKey(UUIDs.ANS_CHARACTERISTIC)) {
                         readRemoteDeviceName();
                     } else {
                         //connectToNotifications();
@@ -322,17 +374,27 @@ public class SensorNode {
             } else {
                 Log.w(TAG, "onServicesDiscovered received: " + status);
             }
+
+            Intent intent = new Intent(ACTION_GATT_SERVICES_DISCOVERED);
+            mContext.sendBroadcast(intent);
         }
 
         @Override
         public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) throws SecurityException {
             super.onMtuChanged(gatt, mtu, status);
+
+            repostDisconnectDelayed(RESPONSE_TIMEOUT);
+
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.w(TAG, "failed to increase MTU size");
             }
             // TODO: check BluetoothGatt.onConnectionUpdate()!!!
             //mBluetoothGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
-            connectToNotifications();
+            if (mSyncEnabled) {
+                connectToNotifications();
+            } else {
+                readAllData();
+            }
         }
 
         @Override
@@ -346,13 +408,15 @@ public class SensorNode {
             super.onDescriptorWrite(gatt, descriptor, status);
             Log.i(TAG, "onDescriptorWrite");
 
+            repostDisconnectDelayed(RESPONSE_TIMEOUT);
+
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 //todo
                 Log.e(TAG, "error writing descriptor");
             }
 
             if (mSyncFinished) {
-                synchronizeTime(mCTSCharacteristics);
+                synchronizeTime();
             }
             //connectToNotifications();
         }
@@ -363,6 +427,8 @@ public class SensorNode {
             super.onCharacteristicRead(gatt, characteristic, status);
             Log.i(TAG, "onCharacteristicRead");
 
+            repostDisconnectDelayed(RESPONSE_TIMEOUT);
+
             if(status == BluetoothGatt.GATT_SUCCESS) {
 
                 final byte[] data = characteristic.getValue();
@@ -372,14 +438,31 @@ public class SensorNode {
                 if (data.length < 1)
                     return;
 
-                if (characteristic.getUuid().compareTo(mNameCharacteristics.getUuid()) == 0) {
+                if (remoteCharacteristics.containsKey(characteristic.getUuid())) {
+                    Log.d(TAG, "received from characteristic in HashMap");
+                }
+
+                if (characteristic.getUuid().compareTo(UUIDs.ANS_CHARACTERISTIC) == 0) {
                     Log.d(TAG, "received remote device name: " + mDeviceName);
                     mDeviceName = new String(data);
                     //connectToNotifications();
                     mBluetoothGatt.requestMtu(517);
                 }
 
-                else if(characteristic.getUuid().compareTo(mCTSCharacteristics.getUuid()) == 0) {
+                else if (characteristic.getUuid().compareTo(UUIDs.DD_ACTUATOR_STATE_CHAR) == 0) {
+                    Log.d(TAG, "received " + UUIDs.DD_ACTUATOR_STATE_CHAR);
+
+                    outputPositionRelative = ByteBuffer.wrap(data, 0, 1).get();
+                    actuatorValue = outputPositionRelative;
+                    outputPositionAbsolute = ByteBuffer.wrap(data, 1, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+                    outputMode = ByteBuffer.wrap(data, 5, 1).get();
+                    outputValueLow = ByteBuffer.wrap(data, 6, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
+                    outputValueHigh = ByteBuffer.wrap(data, 8, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
+
+                    readAllData();
+                }
+
+                else if(characteristic.getUuid().compareTo(UUIDs.CTS_CHARACTERISTICS) == 0) {
                     long mTsCtsReceived = System.currentTimeMillis();
                     int iRemoteTS = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getInt();
                     long remote_ts = (iRemoteTS & 0xffffffffL);
@@ -388,6 +471,10 @@ public class SensorNode {
                     Log.d(TAG, "host timestamp:   " + host_ts);
                     Log.d(TAG, "remote timestamp (int):  " + iRemoteTS);
                     Log.d(TAG, "remote timestamp (long): " + remote_ts);
+
+                    if (!mSyncEnabled) {
+                        return;
+                    }
 
                     if (remote_ts == 0
                             || mSyncedDataSets >= 96
@@ -410,7 +497,7 @@ public class SensorNode {
                                         ts - mTsSyncStart,
                                         ts - mTsConnectStart).toString());
 
-                        disconnect();
+                        repostDisconnectNow();
                         mIsSynchronizing = false;
 
                         mContext.sendBroadcast(intent);
@@ -440,27 +527,20 @@ public class SensorNode {
                     mTimestampSemaphore.release();
 
                     handleDataSynchronization(CTS_REF_DATA);
-
-                } else if(characteristic.getUuid().compareTo(mBASCharacteristics.getUuid()) == 0) {
-                    int battery = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xffff;
-                    final Intent intent = new Intent(ACTION_GATT_READ_BATTERY);
-                    intent.putExtra(EXTRA_DATA_BATTERY, battery);
-                    mContext.sendBroadcast(intent);
-
-                } else if(characteristic.getUuid().compareTo(mTempCharacteristics.getUuid()) == 0) {
+                }
+                else if(characteristic.getUuid().compareTo(UUIDs.BAS_CHARACTERISTICS) == 0) {
+                    batteryValue = ByteBuffer.wrap(data).get();
+                    readAllData();
+                }
+                else if(characteristic.getUuid().compareTo(UUIDs.ESS_TEMP_CHARACTERISTICS) == 0) {
                     int temp = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getShort();
-                    mTempValue = ((float) temp) / 16.0f;
-                    if(mTempValue < 50.0) {
-                        final Intent intent = new Intent(ACTION_GATT_READ_TEMPERATURE);
-                        intent.putExtra(EXTRA_DATA_TEMPERATURE, ((float) temp) / 16.0f);
-                        mContext.sendBroadcast(intent);
-                    }
-
-                } else if(characteristic.getUuid().compareTo(mHumiCharacteristics.getUuid()) == 0) {
-                    mMoistureValue = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xffff;
-                    final Intent intent = new Intent(ACTION_GATT_READ_MOISTURE);
-                    intent.putExtra(EXTRA_DATA_MOISTURE, mMoistureValue);
-                    mContext.sendBroadcast(intent);
+                    mTempValue = ((double) temp) / 100.0;
+                    readAllData();
+                }
+                else if(characteristic.getUuid().compareTo(UUIDs.ESS_HUMI_CHARACTERISTICS) == 0) {
+                    int temp = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xffff;
+                    mMoistureValue = ((double) temp) / 100.0;
+                    readAllData();
                 }
             }
         }
@@ -470,13 +550,16 @@ public class SensorNode {
             super.onCharacteristicWrite(gatt, characteristic, status);
             Log.i(TAG, "onCharacteristicWrite: " + characteristic.getUuid().toString());
 
+            repostDisconnectDelayed(RESPONSE_TIMEOUT);
+
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 //todo
                 Log.e(TAG, "error writing characteristics");
             }
 
-            if (characteristic.getUuid().compareTo(UUIDCollection.CTS_CHARACTERISTICS) == 0) {
-                disconnect();
+            if (characteristic.getUuid().compareTo(UUIDs.CTS_CHARACTERISTICS) == 0) {
+                Log.d(TAG, "read CTS, disconnecting");
+                repostDisconnectNow();
             }
         }
 
@@ -484,6 +567,8 @@ public class SensorNode {
         public void onCharacteristicChanged(BluetoothGatt gatt,
                                             BluetoothGattCharacteristic characteristic) {
             super.onCharacteristicChanged(gatt, characteristic);
+
+            repostDisconnectDelayed(RESPONSE_TIMEOUT);
 
             Log.i(TAG, "onCharacteristicChanged: " + characteristic.getUuid().toString());
             final byte[] data = characteristic.getValue();
@@ -493,7 +578,7 @@ public class SensorNode {
             if (data.length < 1)
                 return;
 
-            if(characteristic.getUuid().compareTo(UUIDCollection.CTS_CHARACTERISTICS) == 0) {
+            if(characteristic.getUuid().compareTo(UUIDs.CTS_CHARACTERISTICS) == 0) {
                 long timestamp =
                         ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xffffffffL;
                 Log.d(TAG, "dataset timestamp: " + timestamp);
@@ -515,7 +600,7 @@ public class SensorNode {
 
                 handleDataSynchronization(CTS_DATA);
 
-            } else if(characteristic.getUuid().compareTo(UUIDCollection.BAS_CHARACTERISTICS) == 0) {
+            } else if(characteristic.getUuid().compareTo(UUIDs.BAS_CHARACTERISTICS) == 0) {
                 int battery = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xffff;
                 try {
                     mSensorDataJson.put("battery", battery);
@@ -524,7 +609,7 @@ public class SensorNode {
                 }
                 handleDataSynchronization(BAS_DATA);
 
-            } else if(characteristic.getUuid().compareTo(UUIDCollection.ESS_TEMP_CHARACTERISTICS) == 0) {
+            } else if(characteristic.getUuid().compareTo(UUIDs.ESS_TEMP_CHARACTERISTICS) == 0) {
                 int temp = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getShort();
                 float fTemp = ((float) temp) / 16.0f;
                 try {
@@ -536,7 +621,7 @@ public class SensorNode {
                 }
                 handleDataSynchronization(TEMP_DATA);
 
-            } else if(characteristic.getUuid().compareTo(UUIDCollection.ESS_HUMI_CHARACTERISTICS) == 0) {
+            } else if(characteristic.getUuid().compareTo(UUIDs.ESS_HUMI_CHARACTERISTICS) == 0) {
                 int humidity = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xffff;
                 try {
                     mSensorDataJson.put("moisture", humidity);
@@ -545,7 +630,7 @@ public class SensorNode {
                 }
                 handleDataSynchronization(HUMI_DATA);
 
-            } else if (characteristic.getUuid().compareTo(UUIDCollection.ESS_RAINFALL_CHARACTERISTICS) == 0) {
+            } else if (characteristic.getUuid().compareTo(UUIDs.ESS_RAINFALL_CHARACTERISTICS) == 0) {
                 int rainfall = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xffff;
                 try {
                     mSensorDataJson.put("rainfall", rainfall);
@@ -553,8 +638,8 @@ public class SensorNode {
                     e.printStackTrace();
                 }
                 handleDataSynchronization(RAIN_DATA);
-            } else if (characteristic.getUuid().compareTo(UUIDCollection.ASS_CHARACTERISTICS) == 0) {
-                processSynchronizationData(mSyncCharacteristics.getDescriptors(), data);
+            } else if (characteristic.getUuid().compareTo(UUIDs.ASS_CHARACTERISTICS) == 0) {
+                processSynchronizationData(characteristic.getDescriptors(), data);
             }
         }
     }
@@ -570,7 +655,7 @@ public class SensorNode {
             Log.d(TAG, "synchronization finished");
             mIsSynchronizing = false;
             mSyncFinished = true;
-            synchronizeTime(mCTSCharacteristics);
+            synchronizeTime();
             mTimeLastSync = Instant.now().getEpochSecond();
 
             if (mSensorDataJson != null) {
@@ -606,11 +691,11 @@ public class SensorNode {
 
             for (BluetoothGattDescriptor desc: descs) {
 
-                if (desc.getUuid().compareTo(UUIDCollection.GATT_DDD) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.GATT_DDD) == 0) {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_TID) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_TID) == 0) {
                     key = "ts";
                     long timestamp = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() & 0xffffffffL;
                     offset += 4;
@@ -623,7 +708,7 @@ public class SensorNode {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_BVD) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_BVD) == 0) {
                     key = "battery";
                     int batteryValue = ByteBuffer.wrap(data, offset, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xffff;
                     offset += 2;
@@ -640,7 +725,7 @@ public class SensorNode {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_STD) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_STD) == 0) {
                     key = "temperature";
                     occurrence = 1;
                     while (sensorValueData.has(key)) {
@@ -663,7 +748,7 @@ public class SensorNode {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_SRHD) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_SRHD) == 0) {
                     key = "moisture";
                     occurrence = 1;
                     while (sensorValueData.has(key)) {
@@ -686,7 +771,7 @@ public class SensorNode {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_RFD) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_RFD) == 0) {
                     key = "precipitation";
                     int rain = ByteBuffer.wrap(data, offset, 2).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xfffff;
                     offset += 2;
@@ -703,7 +788,7 @@ public class SensorNode {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_ATD) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_ATD) == 0) {
                     key = "temperature";
                     occurrence = 1;
                     while (sensorValueData.has(key)) {
@@ -726,7 +811,7 @@ public class SensorNode {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_ARHD) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_ARHD) == 0) {
                     key = "humidity";
                     occurrence = 1;
                     while (sensorValueData.has(key)) {
@@ -749,7 +834,7 @@ public class SensorNode {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_APB) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_APB) == 0) {
                     key = "pressure";
                     occurrence = 1;
                     while (sensorValueData.has(key)) {
@@ -772,7 +857,7 @@ public class SensorNode {
                     continue;
                 }
 
-                if (desc.getUuid().compareTo(UUIDCollection.ASS_AOD) == 0) {
+                if (desc.getUuid().compareTo(UUIDs.ASS_AOD) == 0) {
                     key = "actuator_out";
                     occurrence = 1;
                     while (sensorValueData.has(key)) {
@@ -826,19 +911,17 @@ public class SensorNode {
                 BluetoothGattCharacteristic writeCTSCharacteristics = null;
 
                 for (BluetoothGattService service : gatt.getServices()) {
-                    writeCTSCharacteristics = service.getCharacteristic(UUIDCollection.CTS_CHARACTERISTICS);
+                    writeCTSCharacteristics = service.getCharacteristic(UUIDs.CTS_CHARACTERISTICS);
                     if (writeCTSCharacteristics == null) {
                         Log.e(TAG, "no CTS characteristics available");
                         continue;
                     }
-
-                    synchronizeTime(writeCTSCharacteristics);
-
+                    synchronizeTime();
                     break;
                 }
 
                 if (writeCTSCharacteristics == null)
-                    disconnect();
+                    repostDisconnectNow();
             }
         }
 
@@ -851,7 +934,7 @@ public class SensorNode {
                 Log.e(TAG, "error writing characteristics");
             }
 
-            disconnect();
+            repostDisconnectNow();
         }
     }
 
@@ -860,7 +943,12 @@ public class SensorNode {
     }
 
     private void readRemoteDeviceName() throws SecurityException {
-        mBluetoothGatt.readCharacteristic(mNameCharacteristics);
+        if (!remoteCharacteristics.containsKey(UUIDs.ANS_CHARACTERISTIC)) {
+            Log.w(TAG, "ANS_CHARACTERISTIC not found");
+            return;
+        }
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.ANS_CHARACTERISTIC);
+        mBluetoothGatt.readCharacteristic(characteristic);
     }
 
     private void connectToNotifications() throws SecurityException {
@@ -873,12 +961,19 @@ public class SensorNode {
             broadcastStateChanged();
         }
 
+        if (!remoteCharacteristics.containsKey(UUIDs.ASS_CHARACTERISTICS)) {
+            Log.w(TAG, "ASS_CHARACTERISTICS not available");
+            return;
+        }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.ASS_CHARACTERISTICS);
+
         //mBluetoothGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
 
-        BluetoothGattDescriptor desc = mSyncCharacteristics.getDescriptor(UUIDCollection.GATT_DDD);
-        if(mBluetoothGatt.setCharacteristicNotification(mSyncCharacteristics, true)) {
+        BluetoothGattDescriptor desc = characteristic.getDescriptor(UUIDs.GATT_DDD);
+        if(mBluetoothGatt.setCharacteristicNotification(characteristic, true)) {
             Log.i(TAG, "notification enable sent for "
-                    + mSyncCharacteristics.getUuid().toString());
+                    + characteristic.getUuid().toString());
         }
 
         desc.setValue(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE);
@@ -888,21 +983,157 @@ public class SensorNode {
     }
 
     public void readBatteryValue() throws SecurityException {
-        if(!mBluetoothGatt.readCharacteristic(mBASCharacteristics)) {
-            Log.i(TAG, "reading remote battery value failed");
+        if (!remoteCharacteristics.containsKey(UUIDs.BAS_CHARACTERISTICS)) {
+            readAllData();
+            return;
+        }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.BAS_CHARACTERISTICS);
+        if(!mBluetoothGatt.readCharacteristic(characteristic)) {
+            Log.w(TAG, "reading remote battery value failed");
         }
     }
 
     public void readTemperatureValue() throws SecurityException {
-        if(!mBluetoothGatt.readCharacteristic(mTempCharacteristics)) {
-            Log.i(TAG, "reading remote temperature value failed");
+        if (!remoteCharacteristics.containsKey(UUIDs.ESS_TEMP_CHARACTERISTICS)) {
+            readAllData();
+            return;
+        }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.ESS_TEMP_CHARACTERISTICS);
+        if(!mBluetoothGatt.readCharacteristic(characteristic)) {
+            Log.w(TAG, "reading remote temperature value failed");
         }
     }
 
     public void readMoistureValue() throws SecurityException {
-        if(!mBluetoothGatt.readCharacteristic(mHumiCharacteristics)) {
-            Log.i(TAG, "reading remote humidity value failed");
+        if (!remoteCharacteristics.containsKey(UUIDs.ESS_HUMI_CHARACTERISTICS)) {
+            readAllData();
+            return;
         }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.ESS_HUMI_CHARACTERISTICS);
+        if(!mBluetoothGatt.readCharacteristic(characteristic)) {
+            Log.w(TAG, "reading remote humidity value failed");
+        }
+    }
+
+    public void readActuator() throws SecurityException {
+        if (!remoteCharacteristics.containsKey(UUIDs.DD_ACTUATOR_STATE_CHAR)) {
+            readAllData();
+            return;
+        }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.DD_ACTUATOR_STATE_CHAR);
+        if (!mBluetoothGatt.readCharacteristic(characteristic)) {
+            Log.w(TAG, "failed to read characteristics \""
+                    + characteristic.getUuid().toString() + "\"");
+        }
+    }
+
+    public void writeActuator(int mode, int valueHigh, int valueLow) throws SecurityException {
+
+        if (!isConnected()) {
+            return;
+        }
+
+        Log.d(TAG, "writeActuator(): mode: " + mode
+            + ", valueHigh: " + valueHigh
+            + ", valueLow: " + valueLow);
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.DD_ACTUATOR_STATE_CHAR);
+        ByteBuffer actuatorBuffer;
+        switch (mode) {
+            case 1:
+                actuatorBuffer = ByteBuffer.allocate(3);
+                actuatorBuffer.order(ByteOrder.LITTLE_ENDIAN);
+                actuatorBuffer.put((byte)mode);
+                actuatorBuffer.putShort((short)valueHigh);
+                break;
+
+            case 2:
+                actuatorBuffer = ByteBuffer.allocate(5);
+                actuatorBuffer.order(ByteOrder.LITTLE_ENDIAN);
+                actuatorBuffer.put((byte)mode);
+                actuatorBuffer.putShort((short)valueHigh);
+                actuatorBuffer.putShort((short)valueLow);
+                break;
+
+            case 0:
+            default:
+                actuatorBuffer = ByteBuffer.allocate(2);
+                actuatorBuffer.put((byte) mode);
+                actuatorBuffer.put((byte) valueHigh);
+        }
+
+        characteristic.setValue(actuatorBuffer.array());
+
+        mBluetoothGatt.writeCharacteristic(characteristic);
+    }
+
+    private enum DataPos {
+        ACTUATOR,
+        TEMPERATURE,
+        MOISTURE,
+        BATTERY,
+        FINISH
+    }
+
+    private DataPos dataPos = DataPos.ACTUATOR;
+
+    void readAllData() {
+
+        switch (dataPos) {
+            case ACTUATOR:
+                dataPos = DataPos.TEMPERATURE;
+                readActuator();
+                break;
+            case TEMPERATURE:
+                dataPos = DataPos.MOISTURE;
+                readTemperatureValue();
+                break;
+            case MOISTURE:
+                dataPos = DataPos.BATTERY;
+                readMoistureValue();
+                break;
+            case BATTERY:
+                dataPos = DataPos.FINISH;
+                readBatteryValue();
+                break;
+            case FINISH:
+            default:
+                dataPos = DataPos.ACTUATOR;
+                Intent intent = new Intent(ACTION_DATA_AVAILABLE);
+                mContext.sendBroadcast(intent);
+        }
+    }
+
+    public boolean hasActuator() {
+        return remoteCharacteristics.containsKey(UUIDs.DD_ACTUATOR_STATE_CHAR);
+    }
+
+    public boolean hasMoisture() {
+        return remoteCharacteristics.containsKey(UUIDs.ESS_HUMI_CHARACTERISTICS);
+    }
+
+    public void writeActuator(int mode, int value) throws SecurityException {
+        writeActuator(mode, value, 0);
+    }
+
+    public void writeActuatorCalibration(int mode) throws SecurityException {
+        if (!isConnected()) {
+            return;
+        }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.DD_ACTUATOR_CALIBRATION_CHAR);
+        ByteBuffer actuatorBuffer;
+
+        actuatorBuffer = ByteBuffer.allocate(1);
+        actuatorBuffer.put((byte) mode);
+
+        characteristic.setValue(actuatorBuffer.array());
+
+        mBluetoothGatt.writeCharacteristic(characteristic);
     }
 
     public void setSyncEnabled(Boolean syncEnabled) {
@@ -910,10 +1141,11 @@ public class SensorNode {
     }
 
     private void startDataSynchronization() throws SecurityException {
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.CTS_CHARACTERISTICS);
         mSensorDataJson = new JSONObject();
 
         mTsCtsCalled = System.currentTimeMillis();
-        if (mReadCharacteristics != null && mBluetoothGatt.readCharacteristic(mCTSCharacteristics)) {
+        if (mReadCharacteristics != null && mBluetoothGatt.readCharacteristic(characteristic)) {
             Log.i(TAG, "reading remote time");
         } else {
             Log.e(TAG, "reading remote time failed");
@@ -1047,8 +1279,14 @@ public class SensorNode {
         mContext.sendBroadcast(intent);
     }
 
-    public void synchronizeTime(BluetoothGattCharacteristic writeCTSCharacteristics)
-            throws SecurityException {
+    public void synchronizeTime() throws SecurityException {
+        if (!remoteCharacteristics.containsKey(UUIDs.CTS_CHARACTERISTICS)) {
+            Log.w(TAG, "no CTS characteristics available to synchronize time");
+            return;
+        }
+
+        BluetoothGattCharacteristic writeCTSCharacteristics =
+                remoteCharacteristics.get(UUIDs.CTS_CHARACTERISTICS);
         ByteBuffer timebuffer = ByteBuffer.allocate(10);
         OffsetDateTime now = OffsetDateTime.now( ZoneOffset.UTC );
 
@@ -1102,14 +1340,28 @@ public class SensorNode {
         return mScanResult.getRssi();
     }
 
-    public float getTemperature() {
+    public double getTemperature() {
         return mTempValue;
     }
 
-    public float getMoisture() {
+    public double getMoisture() {
         return mMoistureValue;
     }
+    public int getBatteryValue() { return batteryValue; }
+    public int getActuatorValue() { return actuatorValue; }
 
+    public int getOutputPositionRelative() { return outputPositionRelative; }
+    public int getOutputPositionAbsolute() { return outputPositionRelative; }
+    public int getOutputMode() { return outputMode; }
+    public void setOutputMode(int outputMode) {
+        this.outputMode = outputMode;
+    }
+    public int getOutputValueLow() { return outputValueLow; }
+    public int getOutputValueHigh() { return outputValueHigh; }
+
+    public void setOutputValueHigh(int outputValueHigh) {
+        this.outputValueHigh = outputValueHigh;
+    }
 
     public long getTimeLastSync() {
         return mTimeLastSync;
@@ -1135,6 +1387,21 @@ public class SensorNode {
         }
 
         return R.string.undefinied;
+    }
+
+    private void repostDisconnectNow() {
+        disconnectedAfterTimeout = false;
+        mHandler.removeCallbacks(disconnectRunner);
+        mHandler.post(disconnectRunner);
+    }
+
+    private void repostDisconnectDelayed(long delayMillis) {
+        if (!mSyncEnabled) {
+            return;
+        }
+        disconnectedAfterTimeout = true;
+        mHandler.removeCallbacks(disconnectRunner);
+        mHandler.postDelayed(disconnectRunner, delayMillis);
     }
 
     public String getStateString() {

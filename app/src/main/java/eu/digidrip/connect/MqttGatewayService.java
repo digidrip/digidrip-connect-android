@@ -10,9 +10,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
 
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.ObjectOutputStream;
 import java.util.List;
 
 public class MqttGatewayService extends Service {
@@ -95,11 +92,11 @@ public class MqttGatewayService extends Service {
                 return;
             }
 
-            if (action.equals(SensorNode.ACTION_GATT_CONNECTED)) {
+            if (action.equals(Node.ACTION_GATT_CONNECTED)) {
                 String deviceAddress =
-                        intent.getStringExtra(SensorNode.EXTRA_DATA_DEVICE_ADDRESS);
+                        intent.getStringExtra(Node.EXTRA_DATA_DEVICE_ADDRESS);
                 String deviceAttributes =
-                        intent.getStringExtra(SensorNode.EXTRA_DATA_DEVICE_ATTRIBUTES_JSON_STRING);
+                        intent.getStringExtra(Node.EXTRA_DATA_DEVICE_ATTRIBUTES_JSON_STRING);
                 //publishConnectMessage(deviceAddress);
                 //publishAttributeMessage(deviceAttributes);
                 //publishAttributeMessage(deviceAttributes);
@@ -107,22 +104,22 @@ public class MqttGatewayService extends Service {
                 return;
             }
 
-            if (action.equals(SensorNode.ACTION_GATT_DATA_AVAILABLE)) {
-                data = intent.getStringExtra(SensorNode.EXTRA_DATA_JSON_STRING);
+            if (action.equals(Node.ACTION_GATT_DATA_AVAILABLE)) {
+                data = intent.getStringExtra(Node.EXTRA_DATA_JSON_STRING);
                 NodeSyncClient.getInstance(getApplicationContext()).publishTelemetryMessage(data);
                 return;
             }
 
-            if (action.equals(SensorNode.ACTION_GATT_DISCONNECTED)) {
+            if (action.equals(Node.ACTION_GATT_DISCONNECTED)) {
                 String deviceAddress =
-                        intent.getStringExtra(SensorNode.EXTRA_DATA_DEVICE_ADDRESS);
+                        intent.getStringExtra(Node.EXTRA_DATA_DEVICE_ADDRESS);
                 Log.d(TAG, "device disconnected: " + deviceAddress);
                 //publishDisconnectMessage(deviceAddress);
                 return;
             }
 
-            if (action.equals(SensorNode.ACTION_PUBLISH_ATTRIBUTE)) {
-                data = intent.getStringExtra(SensorNode.EXTRA_DATA_DEVICE_ATTRIBUTES_JSON_STRING);
+            if (action.equals(Node.ACTION_PUBLISH_ATTRIBUTE)) {
+                data = intent.getStringExtra(Node.EXTRA_DATA_DEVICE_ATTRIBUTES_JSON_STRING);
                 NodeSyncClient.getInstance(getApplicationContext()).publishAttributeMessage(data);
                 return;
             }
@@ -145,10 +142,10 @@ public class MqttGatewayService extends Service {
 
     private IntentFilter makeIntentFilter() {
         IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(SensorNode.ACTION_GATT_CONNECTED);
-        intentFilter.addAction(SensorNode.ACTION_GATT_DATA_AVAILABLE);
-        intentFilter.addAction(SensorNode.ACTION_GATT_DISCONNECTED);
-        intentFilter.addAction(SensorNode.ACTION_PUBLISH_ATTRIBUTE);
+        intentFilter.addAction(Node.ACTION_GATT_CONNECTED);
+        intentFilter.addAction(Node.ACTION_GATT_DATA_AVAILABLE);
+        intentFilter.addAction(Node.ACTION_GATT_DISCONNECTED);
+        intentFilter.addAction(Node.ACTION_PUBLISH_ATTRIBUTE);
         intentFilter.addAction(BluetoothLeService.ACTION_BEACONS_FOUND);
         intentFilter.addAction(MainActivity.ACTION_MQTT_CREDENTIALS_UPDATED);
         intentFilter.addAction(MainActivity.ACTION_MQTT_CONNECT);

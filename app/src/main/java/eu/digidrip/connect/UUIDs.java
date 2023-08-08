@@ -2,7 +2,7 @@ package eu.digidrip.connect;
 
 import java.util.UUID;
 
-public class UUIDCollection {
+public class UUIDs {
     public static final UUID GATT_DDD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     public static final UUID CTS_SERVICE = UUID.fromString("00001805-0000-1000-8000-00805f9b34fb");
     public static final UUID CTS_CHARACTERISTICS = UUID.fromString("00002a2b-0000-1000-8000-00805f9b34fb");
@@ -25,4 +25,8 @@ public class UUIDCollection {
     public static final UUID ASS_ATD = UUID.fromString("8fee2902-3c17-4189-8556-a293fa6b2739");
     public static final UUID ASS_ARHD = UUID.fromString("8fee2903-3c17-4189-8556-a293fa6b2739");
     public static final UUID ASS_APB = UUID.fromString("8fee2916-3c17-4189-8556-a293fa6b2739");
+
+    public static final UUID DD_ACTUATOR_STATE_CHAR = UUID.fromString("8fee29f1-3c17-4189-8556-a293fa6b2739");
+    public static final UUID DD_ACTUATOR_PID_CHAR = UUID.fromString("8fee29f2-3c17-4189-8556-a293fa6b2739");
+    public static final UUID DD_ACTUATOR_CALIBRATION_CHAR = UUID.fromString("8fee29f3-3c17-4189-8556-a293fa6b2739");
 }

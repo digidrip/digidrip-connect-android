@@ -1,0 +1,17 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/action_settings"
+        android:title="@string/irrigation_settings"
+        android:icon="@drawable/ic_settings"
+        android:orderInCategory="100"
+        app:showAsAction="always"
+        />
+    <item
+        android:id="@+id/action_close"
+        android:title="@string/close"
+        android:icon="@drawable/ic_close"
+        android:orderInCategory="101"
+        app:showAsAction="always"
+        />
+</menu>

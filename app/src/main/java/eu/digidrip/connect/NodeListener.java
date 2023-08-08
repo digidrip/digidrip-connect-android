@@ -1,6 +1,6 @@
 package eu.digidrip.connect;
 
-public interface SensorNodeListener {
+public interface NodeListener {
 
     void connected();
     void disconnected();

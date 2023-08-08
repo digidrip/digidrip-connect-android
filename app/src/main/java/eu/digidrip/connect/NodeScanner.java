@@ -10,6 +10,7 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
+import android.preference.PreferenceManager;
 import android.util.Log;
 
 import java.time.Instant;
@@ -35,7 +36,7 @@ public class NodeScanner {
 
     private Handler mHandler;
 
-    private static HashMap<String, SensorNode> mSensorNodes = new HashMap<String, SensorNode>();
+    private static HashMap<String, Node> mSensorNodes = new HashMap<String, Node>();
 
     private List<NodeScannerListener> mNodeScannerListeners = new ArrayList<>();
 
@@ -51,6 +52,9 @@ public class NodeScanner {
     public static NodeScanner getInstance(Context context) {
         if (scanner == null) {
             scanner = new NodeScanner(context);
+        }
+
+        if (scanner.mBluetoothLeScanner == null) {
             scanner.initBle();
         }
 
@@ -75,7 +79,7 @@ public class NodeScanner {
     }
 
     public void removeAndDisconnectNodes() {
-        for (SensorNode node : mSensorNodes.values()) {
+        for (Node node : mSensorNodes.values()) {
             mSensorNodes.remove(node.getRemoteDeviceName());
             node.disconnect();
         }
@@ -107,7 +111,7 @@ public class NodeScanner {
         mNodeScannerListeners.remove(listener);
     }
 
-    public void startScanning() {
+    public boolean startScanning() {
         Log.d(TAG, "startScanning()");
 
         ScanSettings settings = new ScanSettings.Builder()
@@ -122,6 +126,11 @@ public class NodeScanner {
                 .build();
         filters.add(scanFilter);
 
+        if (mBluetoothLeScanner == null) {
+            Log.e(TAG, "cant't start scanning, no BLE device found");
+            return false;
+        }
+
         mBluetoothLeScanner.startScan(filters, settings, mScanCallback);
 
         delayedStopScanning.run();
@@ -129,16 +138,26 @@ public class NodeScanner {
         for (NodeScannerListener listener: mNodeScannerListeners) {
             listener.scanStarted();
         }
+
+        return true;
     }
 
-    public void stopScanning() {
+    public boolean stopScanning() {
         Log.i(TAG, "stopScanning()");
+
+        if (mBluetoothLeScanner == null) {
+            Log.e(TAG, "no BLE device available, can't stop scanning");
+            return false;
+        }
+
         mBluetoothLeScanner.stopScan(mScanCallback);
-        synchronizeSensorNode();
+        synchronizeSensorNodes();
 
         for (NodeScannerListener listener: mNodeScannerListeners) {
             listener.scanStopped();
         }
+
+        return true;
     }
 
     private final ScanCallback mScanCallback = new ScanCallback() {
@@ -158,23 +177,23 @@ public class NodeScanner {
 
             for(ScanResult result: results) {
 
-                SensorNode sensorNode = null;
+                Node node = null;
 
                 if(mSensorNodes.containsKey(result.getDevice().getAddress())) {
-                    sensorNode = mSensorNodes.get(result.getDevice().getAddress());
-                    assert sensorNode != null;
-                    sensorNode.initialize(result);
+                    node = mSensorNodes.get(result.getDevice().getAddress());
+                    assert node != null;
+                    node.initialize(result);
                 }
 
                 else if (result.getScanRecord().getDeviceName() != null
                         && checkEddystoneServiceUuids(result)) {
-                    sensorNode = new SensorNode(mContext);
-                    sensorNode.initialize(result);
-                    mSensorNodes.put(sensorNode.getRemoteDeviceName(), sensorNode);
-                    Log.d(TAG, "Found compatible eddstone URI " + sensorNode.getRemoteDeviceName());
+                    node = new Node(mContext);
+                    node.initialize(result);
+                    mSensorNodes.put(node.getRemoteDeviceName(), node);
+                    Log.d(TAG, "Found compatible eddstone URI " + node.getRemoteDeviceName());
                 }
 
-                if (sensorNode != null) {
+                if (node != null) {
                     for (NodeScannerListener listener: mNodeScannerListeners) {
                         listener.foundNode();
                     }
@@ -189,34 +208,53 @@ public class NodeScanner {
         }
     };
 
-    public void synchronizeSensorNode() {
+    public void synchronizeSensorNodes() {
 
+        if (!getAutoSyncPreference()) {
+            Log.d(TAG, "auto sync disabled, not synchronizing");
+            return;
+        }
+
+        Log.d(TAG, "synchronizeSensorNodes()");
         long now = Instant.now().getEpochSecond() - 3600;
 
-        for (SensorNode node: mSensorNodes.values()) {
+        for (Node node: mSensorNodes.values()) {
             if (node.isConnected()) {
                 return;
             }
         }
 
-        for (SensorNode sensorNode: mSensorNodes.values()) {
-            if (sensorNode.getTimeLastSync() < now) {
-                sensorNode.connectAndSyncData();
+        for (Node node : mSensorNodes.values()) {
+            if (node.getTimeLastSync() < now) {
+                Log.d(TAG, "start synchronization of " + node.getRemoteDeviceName());
+                node.connectAndSyncData();
                 return;
             }
         }
+
+        Log.d(TAG, "synchronizeSensorNodes() finished");
     }
 
-    public static List<SensorNode> getSensorNodeList() {
-        ArrayList<SensorNode> sensorNodes = new ArrayList(mSensorNodes.values());
+    public static List<Node> getSensorNodeList() {
+        ArrayList<Node> nodes = new ArrayList(mSensorNodes.values());
 
-        sensorNodes.sort((s1, s2) -> {
+        nodes.sort((s1, s2) -> {
             if (s1.getRssi() == s2.getRssi()) {
                 return 0;
             }
             return s1.getRssi() > s2.getRssi() ? -1 : 1; // if you want to short by name
         });
-        return sensorNodes;
+        return nodes;
+    }
+
+    public boolean getAutoSyncPreference() {
+        return PreferenceManager.getDefaultSharedPreferences(
+                mContext).getBoolean(MainActivity.PREFERENCE_AUTO_SYNC, false);
+    }
+
+    public boolean getAutoScanPreference() {
+        return PreferenceManager.getDefaultSharedPreferences(
+                mContext).getBoolean(MainActivity.PREFERENCE_AUTO_SCAN, false);
     }
 
     private boolean checkEddystoneServiceUuids(ScanResult result) {

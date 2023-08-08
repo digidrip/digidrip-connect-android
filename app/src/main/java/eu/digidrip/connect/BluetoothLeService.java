@@ -168,7 +168,7 @@ public class BluetoothLeService extends Service {
                 return;
             }
 
-            if (action.equals(SensorNode.ACTION_GATT_DISCONNECTED)) {
+            if (action.equals(Node.ACTION_GATT_DISCONNECTED)) {
                 //TODO
             }
         }
@@ -178,7 +178,7 @@ public class BluetoothLeService extends Service {
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(MainActivity.ACTION_START_SCAN);
         intentFilter.addAction(MainActivity.ACTION_STOP_SCAN);
-        intentFilter.addAction(SensorNode.ACTION_GATT_DISCONNECTED);
+        intentFilter.addAction(Node.ACTION_GATT_DISCONNECTED);
         return intentFilter;
     }
 
@@ -205,7 +205,7 @@ public class BluetoothLeService extends Service {
 
     private class LocationSensorData implements LocationListener {
 
-        private List<SensorNode> mBeacons;
+        private List<Node> mBeacons;
         private long mScanTime;
 
         public LocationSensorData() {
@@ -283,11 +283,11 @@ public class BluetoothLeService extends Service {
             Log.d(TAG, "onProviderDisabled");
         }
 
-        private JSONArray serializeJsonFromBeacons(List<SensorNode> beacons)
+        private JSONArray serializeJsonFromBeacons(List<Node> beacons)
         {
             JSONArray bObjects = new JSONArray();
 
-            for(SensorNode s: beacons)
+            for(Node s: beacons)
             {
                 JSONObject bObject = new JSONObject();
                 try {

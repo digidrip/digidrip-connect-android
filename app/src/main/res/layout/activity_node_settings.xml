@@ -4,32 +4,19 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".MainActivity"
+    tools:context=".NodeSettingsActivity"
     android:paddingBottom="@dimen/row_padding_vertical"
     android:paddingLeft="@dimen/activity_horizontal_margin"
     android:paddingRight="@dimen/activity_horizontal_margin"
-    android:paddingTop="@dimen/row_padding_vertical"
-    >
-
-    <TextView
-        android:id="@+id/general"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_alignParentTop="true"
-        android:textColor="@color/title"
-        android:textSize="20dp"
-        android:textStyle="bold"
-        android:text="General"
-        android:visibility="gone"
-        />
+    android:paddingTop="@dimen/row_padding_vertical">
 
     <TableLayout
         android:id="@+id/general_data"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="bottom"
-        android:visibility="gone"
-        android:layout_below="@id/general"
+        android:visibility="visible"
+        android:layout_alignParentTop="true"
         >
         <TableRow
             android:id="@+id/trGeneralLongitude"
@@ -87,102 +74,100 @@
         </TableRow>
     </TableLayout>
 
-    <TextView
-        android:id="@+id/mqtt"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_below="@id/general_data"
-        android:textColor="@color/title"
-        android:textSize="20dp"
-        android:textStyle="bold"
-        android:text="@string/Server"
-        android:paddingTop="10dp"
-        />
-
-    <TableLayout
-        android:id="@+id/mqtt_data"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="bottom"
-        android:visibility="visible"
-        android:layout_below="@id/mqtt"
-        >
-        <TableRow
-            android:id="@+id/trMqttStatus"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@android:drawable/list_selector_background"
-            >
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="20dp"
-                android:text="@string/label_state" />
-            <TextView
-                android:id="@+id/tvLabelMqttStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="20dp"
-                android:text="@string/disconnected" />
-        </TableRow>
-        <TableRow
-            android:id="@+id/trMqttPendingMessages"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@android:drawable/list_selector_background"
-            >
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="20dp"
-                android:text="@string/Pending"
-                android:paddingRight="5dp"
-                />
-            <TextView
-                android:id="@+id/tvLabelMqttPedingMessages"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="20dp"
-                android:text="0 messages" />
-        </TableRow>
-    </TableLayout>
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/sensor_list"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_below="@id/mqtt_data"
-        android:paddingTop="20dp"
-        android:scrollbars="vertical" />
-
     <LinearLayout
+        android:id="@+id/node_send_gps_layout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_above="@id/scan_nodes"
-        >
-        <ToggleButton
-            android:id="@+id/tb_auto_scan"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+        android:layout_below="@+id/general_data">
+        <Button
+            android:id="@+id/node_get_gps_position"
+            android:layout_width="0dp"
             android:layout_weight="0.5"
-            android:text="@string/auto_scan_off"
+            android:layout_height="wrap_content"
+            android:text="Get GPS Coordinates"
             />
-        <ToggleButton
-            android:id="@+id/tb_auto_sync"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+
+        <Button
+            android:id="@+id/node_send_gps_position"
+            android:layout_width="0dp"
             android:layout_weight="0.5"
-            android:text="@string/auto_sync_on"
+            android:layout_height="wrap_content"
+            android:text="Send GPS Coordinates"
+            />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/node_send_calibration_layout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_below="@+id/node_send_gps_layout"
+        android:visibility="gone"
+        >
+        <Button
+            android:id="@+id/node_send_calibration_dry"
+            android:layout_width="0dp"
+            android:layout_weight="0.5"
+            android:layout_height="wrap_content"
+            android:text="Calibrate Dry"
+            />
+        <Button
+            android:id="@+id/node_send_calibration_wet"
+            android:layout_width="0dp"
+            android:layout_weight="0.5"
+            android:layout_height="wrap_content"
+            android:text="Calibrate Wet"
+            />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/node_calib_actuator_layout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_below="@+id/node_send_calibration_layout"
+        android:visibility="gone"
+        >
+        <Button
+            android:id="@+id/calib_open_open"
+            android:layout_width="0dp"
+            android:layout_weight="0.5"
+            android:layout_height="wrap_content"
+            android:text="Rls. Open"
+            android:enabled="false"
+            />
+        <Button
+            android:id="@+id/calib_open_close"
+            android:layout_width="0dp"
+            android:layout_weight="0.5"
+            android:layout_height="wrap_content"
+            android:text="Str. Open"
+            android:enabled="false"
+            />
+        <Button
+            android:id="@+id/calib_close_open"
+            android:layout_width="0dp"
+            android:layout_weight="0.5"
+            android:layout_height="wrap_content"
+            android:text="Rls. Cls"
+            android:enabled="false"
+            />
+        <Button
+            android:id="@+id/calib_close_close"
+            android:layout_width="0dp"
+            android:layout_weight="0.5"
+            android:layout_height="wrap_content"
+            android:text="Str. Cls"
+            android:enabled="false"
             />
     </LinearLayout>
 
     <Button
-        android:id="@+id/scan_nodes"
+        android:id="@+id/btn_node_connect"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Scan"
         android:layout_alignParentBottom="true"
+        android:text="@string/Connect"
         />
-
 </RelativeLayout>
