@@ -98,7 +98,7 @@
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/node_send_calibration_layout"
+        android:id="@+id/layout_node_settings_sensor_calibration"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
@@ -106,14 +106,14 @@
         android:visibility="gone"
         >
         <Button
-            android:id="@+id/node_send_calibration_dry"
+            android:id="@+id/button_node_settings_sensor_dry"
             android:layout_width="0dp"
             android:layout_weight="0.5"
             android:layout_height="wrap_content"
             android:text="Calibrate Dry"
             />
         <Button
-            android:id="@+id/node_send_calibration_wet"
+            android:id="@+id/button_node_settings_sensor_wet"
             android:layout_width="0dp"
             android:layout_weight="0.5"
             android:layout_height="wrap_content"
@@ -126,7 +126,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_below="@+id/node_send_calibration_layout"
+        android:layout_below="@+id/layout_node_settings_sensor_calibration"
         android:visibility="gone"
         >
         <Button

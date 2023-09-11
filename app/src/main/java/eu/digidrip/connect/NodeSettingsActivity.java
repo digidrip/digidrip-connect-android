@@ -1,21 +1,31 @@
 package eu.digidrip.connect;
 
+import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.graphics.Color;
 import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.preference.PreferenceManager;
+import android.text.InputType;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.Window;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -35,6 +45,8 @@ public class NodeSettingsActivity extends AppCompatActivity {
     private double mAltitude = 0.0;
     private double mAccuracy = 0.0;
 
+    private boolean calibrateDry = true;
+
     private LocationManager mLocationManager = null;
     private NodeSettingsActivity.LocationSensorData mSenseDataLocationListener = null;
 
@@ -44,8 +56,7 @@ public class NodeSettingsActivity extends AppCompatActivity {
         setContentView(R.layout.activity_node_settings);
 
         Bundle extras = getIntent().getExtras();
-
-        mNode = NodeScanner.getSensorNodeList().get(extras.getInt("position"));
+        mNode = NodeScanner.getNode(extras.getString("address"));
 
         setTitle(String.format("%s: Settings", mNode.getRemoteDeviceName()));
 
@@ -66,22 +77,18 @@ public class NodeSettingsActivity extends AppCompatActivity {
             }
         });
 
-        Button btn = findViewById(R.id.node_send_calibration_dry);
-        btn.setOnClickListener(view -> {
-            JSONObject data = mNode.serializeGenericAttributesToJson("calibration_dry_moisture", mNode.getMoisture());
-            mNode.publishMqttDeviceAttributes(data.toString());
+        Button btn;
 
-            data = mNode.serializeGenericAttributesToJson("calibration_dry_temperature", mNode.getTemperature());
-            mNode.publishMqttDeviceAttributes(data.toString());
+        btn = findViewById(R.id.button_node_settings_sensor_wet);
+        btn.setOnClickListener(view -> {
+            calibrateDry = false;
+            mNode.readRawMoistureValue();
         });
 
-        btn = findViewById(R.id.node_send_calibration_wet);
+        btn = findViewById(R.id.button_node_settings_sensor_dry);
         btn.setOnClickListener(view -> {
-            JSONObject data = mNode.serializeGenericAttributesToJson("calibration_wet_moisture", mNode.getMoisture());
-            mNode.publishMqttDeviceAttributes(data.toString());
-
-            data = mNode.serializeGenericAttributesToJson("calibration_wet_temperature", mNode.getTemperature());
-            mNode.publishMqttDeviceAttributes(data.toString());
+            calibrateDry = true;
+            mNode.readRawMoistureValue();
         });
 
         btn = findViewById(R.id.node_send_gps_position);
@@ -181,10 +188,13 @@ public class NodeSettingsActivity extends AppCompatActivity {
         Button btn;
         LinearLayout layout;
 
-        btn = findViewById(R.id.node_send_calibration_dry);
+        layout = findViewById(R.id.layout_node_settings_sensor_calibration);
+        layout.setVisibility(mNode.hasActuator() ? View.VISIBLE : View.GONE);
+
+        btn = findViewById(R.id.button_node_settings_sensor_dry);
         btn.setEnabled(mNode.isConnected());
 
-        btn = findViewById(R.id.node_send_calibration_wet);
+        btn = findViewById(R.id.button_node_settings_sensor_wet);
         btn.setEnabled(mNode.isConnected());
 
         layout = findViewById(R.id.node_calib_actuator_layout);
@@ -204,6 +214,42 @@ public class NodeSettingsActivity extends AppCompatActivity {
 
         btn = findViewById(R.id.btn_node_connect);
         btn.setText(mNode.isConnected() ? R.string.Disconnect : R.string.Connect);
+    }
+
+    private void sensorCalibrationDialogWet(int value) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Wet sensor calibration");
+
+        TextView tv = new TextView(this);
+
+        tv.setText(String.format(getResources().getString(R.string.calibration_store_text), value));
+        tv.setGravity(Gravity.CENTER);
+        builder.setView(tv);
+
+        builder.setPositiveButton(R.string.Yes, (dialog, which) -> {
+            mNode.writeSensorCalibration(0x11);
+        });
+        builder.setNegativeButton(R.string.No, (dialog, which) -> dialog.cancel());
+
+        builder.show();
+    }
+
+    private void sensorCalibrationDialogDry(int value) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Dry sensor calibration");
+
+        TextView tv = new TextView(this);
+
+        tv.setText(String.format(getResources().getString(R.string.calibration_store_text), value));
+        tv.setGravity(Gravity.CENTER);
+        builder.setView(tv);
+
+        builder.setPositiveButton(R.string.Yes, (dialog, which) -> {
+            mNode.writeSensorCalibration(0x21);
+        });
+        builder.setNegativeButton(R.string.No, (dialog, which) -> dialog.cancel());
+
+        builder.show();
     }
 
     private final BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
@@ -239,6 +285,15 @@ public class NodeSettingsActivity extends AppCompatActivity {
             if (Node.ACTION_DATA_AVAILABLE.equals(action)) {
                 updateUI();
             }
+
+            if (Node.ACTION_GATT_READ_MOISTURE_DIFF_RAW.equals(action)) {
+                if (calibrateDry) {
+                    sensorCalibrationDialogDry(mNode.getRawMoisture());
+                }
+                else {
+                    sensorCalibrationDialogWet(mNode.getRawMoisture());
+                }
+            }
         }
     };
 
@@ -252,6 +307,7 @@ public class NodeSettingsActivity extends AppCompatActivity {
         intentFilter.addAction(Node.ACTION_GATT_DATA_AVAILABLE);
         intentFilter.addAction(Node.ACTION_GATT_READ_ACTUATOR_STATE);
         intentFilter.addAction(Node.ACTION_DATA_AVAILABLE);
+        intentFilter.addAction(Node.ACTION_GATT_READ_MOISTURE_DIFF_RAW);
 
         return intentFilter;
     }

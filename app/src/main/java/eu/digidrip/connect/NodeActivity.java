@@ -4,28 +4,18 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.location.Criteria;
-import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
-import android.net.Uri;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
-import android.widget.TableRow;
 import android.widget.TextView;
 import android.widget.ToggleButton;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
-
-import org.json.JSONObject;
 
 public class NodeActivity extends AppCompatActivity {
     public static final String TAG = NodeActivity.class.getSimpleName();
@@ -44,8 +34,7 @@ public class NodeActivity extends AppCompatActivity {
         setContentView(R.layout.activity_node);
 
         Bundle extras = getIntent().getExtras();
-
-        mNode = NodeScanner.getSensorNodeList().get(extras.getInt("position"));
+        mNode = NodeScanner.getNode(extras.getString("address"));
 
         setTitle(mNode.getRemoteDeviceName());
 
@@ -78,9 +67,9 @@ public class NodeActivity extends AppCompatActivity {
             mNode.readAllData();
         });
 
-        tbtnManual = (ToggleButton) findViewById(R.id.irrigation_set_manual);
-        tbtnConstant = (ToggleButton) findViewById(R.id.irrigation_set_constant);
-        tbtnHyteresis = (ToggleButton) findViewById(R.id.irrigation_set_hysteresis);
+        tbtnManual    = findViewById(R.id.irrigation_set_manual);
+        tbtnConstant  = findViewById(R.id.irrigation_set_constant);
+        tbtnHyteresis = findViewById(R.id.irrigation_set_hysteresis);
 
         tbtnManual.setOnClickListener(view -> {
             mNode.setOutputMode(0);
@@ -97,14 +86,14 @@ public class NodeActivity extends AppCompatActivity {
             updateUI();
         });
 
-        SeekBar sbIrrigationValue = (SeekBar) findViewById(R.id.irrigation_slider);
+        SeekBar sbIrrigationValue = findViewById(R.id.irrigation_slider);
         sbIrrigationValue.setEnabled(false);
         sbIrrigationValue.setMin(0);
         sbIrrigationValue.setMax(1000);
         sbIrrigationValue.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int i, boolean b) {
-                TextView tvIrrigationValue = (TextView) findViewById(R.id.irrigation_value_label);
+                TextView tvIrrigationValue = findViewById(R.id.irrigation_value_label);
                 tvIrrigationValue.setText("" + (float)i / 10.0f + " %");
 
                 switch (mNode.getOutputMode()) {
@@ -122,6 +111,9 @@ public class NodeActivity extends AppCompatActivity {
             }
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
+                ProgressBar pbActuatorOutput = findViewById(R.id.pb_actuator_output);
+                pbActuatorOutput.setProgress(mNode.getActuatorValueRelative(), false);
+
                 switch (mNode.getOutputMode()) {
                     case 0:
                         mNode.writeActuator(mNode.getOutputMode(), outputPositionRelativeSetter / 100);
@@ -151,7 +143,7 @@ public class NodeActivity extends AppCompatActivity {
         switch (item.getItemId()) {
             case R.id.action_settings:
                 Intent i = new Intent(NodeActivity.this, NodeSettingsActivity.class);
-                i.putExtra("position", getIntent().getExtras().getInt("position"));
+                i.putExtra("address", getIntent().getExtras().getString("address"));
                 startActivity(i);
                 break;
             case R.id.action_close:
@@ -175,10 +167,8 @@ public class NodeActivity extends AppCompatActivity {
             final String action = intent.getAction();
 
             if(Node.ACTION_STATE_CHANGED.equals(action)) {
-                TextView tv = (TextView) findViewById(R.id.tv_label_connection_state);
-
+                TextView tv = findViewById(R.id.tv_label_connection_state);
                 tv.setText(mNode.getStateString());
-
                 updateUI();
             }
 
@@ -202,14 +192,14 @@ public class NodeActivity extends AppCompatActivity {
 
         Button btn;
 
-        btn = (Button) findViewById(R.id.btn_node_connect);
+        btn = findViewById(R.id.btn_node_connect);
         btn.setEnabled(true);
         btn.setText(mNode.isConnected() ? R.string.Disconnect : R.string.Connect);
 
         btn = findViewById(R.id.btn_node_refresh);
         btn.setEnabled(mNode.isConnected());
 
-        btn = (Button) findViewById(R.id.sync_time_node);
+        btn = findViewById(R.id.sync_time_node);
         btn.setEnabled(mNode.isConnected());
 
         TextView tv = findViewById(R.id.tv_label_temperature);
@@ -222,7 +212,7 @@ public class NodeActivity extends AppCompatActivity {
         tv.setText(String.format("%5.1f", (double)mNode.getBatteryValue()));
 
         ProgressBar pbActuatorOutput = findViewById(R.id.pb_actuator_output);
-        pbActuatorOutput.setProgress(mNode.getActuatorValue());
+        pbActuatorOutput.setProgress(mNode.getActuatorValueRelative(), false);
 
         SeekBar seekBar = findViewById(R.id.irrigation_slider);
         seekBar.setEnabled(mNode.hasActuator());

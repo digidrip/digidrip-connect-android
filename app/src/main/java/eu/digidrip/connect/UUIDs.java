@@ -29,4 +29,5 @@ public class UUIDs {
     public static final UUID DD_ACTUATOR_STATE_CHAR = UUID.fromString("8fee29f1-3c17-4189-8556-a293fa6b2739");
     public static final UUID DD_ACTUATOR_PID_CHAR = UUID.fromString("8fee29f2-3c17-4189-8556-a293fa6b2739");
     public static final UUID DD_ACTUATOR_CALIBRATION_CHAR = UUID.fromString("8fee29f3-3c17-4189-8556-a293fa6b2739");
+    public static final UUID DD_SENSOR_CALIBRATION_CHAR = UUID.fromString("8fee2a70-3c17-4189-8556-a293fa6b2739");
 }

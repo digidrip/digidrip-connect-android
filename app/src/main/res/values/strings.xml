@@ -27,6 +27,10 @@
 
     <string name="ok">OK</string>
     <string name="cancel">Cancel</string>
+    <string name="Save">Save</string>
+    <string name="calibration_store_text">Raw sensor value: %d. Save?</string>
+    <string name="Yes">Yes</string>
+    <string name="No">No</string>
 
     <string name="connected">connected</string>
     <string name="connecting">connecting</string>

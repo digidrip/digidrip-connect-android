@@ -1,5 +1,6 @@
 package eu.digidrip.connect;
 
+import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
@@ -36,7 +37,9 @@ public class Node {
 
     private final Context mContext;
     private final Handler mHandler;
-    private ScanResult mScanResult = null;
+
+    private String nodeAddress;
+    private int nodeRssi;
 
     private final Semaphore mTimestampSemaphore = new Semaphore(1);
 
@@ -73,13 +76,13 @@ public class Node {
     private int batteryValue = 0;
     private double mTempValue = 0.0;
     private double mMoistureValue = 0.0;
-    private int actuatorValue;
-
+    private int actuatorValueRelative = 0;
+    private int actuatorValueAbsolute = 0;
     private int outputPositionRelative = 0;
-    private int outputPositionAbsolute = 0;
     private int outputMode = 0;
     private int outputValueLow = 0;
     private int outputValueHigh = 0;
+    private int rawMoistureValue = 0;
 
     private int mConnectionState = BluetoothProfile.STATE_DISCONNECTED;
 
@@ -123,10 +126,11 @@ public class Node {
     public final static String EXTRA_DATA_TEMPERATURE =
             TAG + ".EXTRA_DATA_TEMPERATURE";
 
+    public final static String ACTION_GATT_READ_MOISTURE_DIFF_RAW =
+            TAG + ".ACTION_GATT_READ_MOISTURE_DIFF_RAW";
+
     public final static String ACTION_GATT_READ_MOISTURE =
             TAG + ".ACTION_GATT_READ_MOISTURE";
-    public final static String EXTRA_DATA_MOISTURE =
-            TAG + ".EXTRA_DATA_MOISTURE";
 
     public final static String ACTION_GATT_READ_ACTUATOR_STATE =
             TAG + ".ACTION_GATT_READ_ACTUATOR_STATE";
@@ -162,7 +166,8 @@ public class Node {
     }
 
     public void initialize(ScanResult result) {
-        mScanResult = result;
+        nodeAddress = result.getDevice().getAddress();
+        nodeRssi = result.getRssi();
         reconnectAttempts = 0;
         if (mDeviceName == null) {
             mDeviceName = getRemoteDeviceName();
@@ -185,13 +190,14 @@ public class Node {
             if (mBluetoothGatt != null) {
                 mBluetoothGatt.close();
             }
-            mBluetoothGatt = mScanResult.getDevice().connectGatt(mContext,
+
+            mBluetoothGatt = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(nodeAddress).connectGatt(mContext,
                     false, getGattCallback(), BluetoothDevice.TRANSPORT_LE);
             mConnectionState = BluetoothProfile.STATE_CONNECTING;
             if (mBluetoothGatt.connect()) {
-                Log.i(TAG, "connecting to " + mScanResult.getDevice().getAddress());
+                Log.i(TAG, "connecting to " + nodeAddress);
             } else {
-                Log.e(TAG, "error connecting to " + mScanResult.getDevice().getAddress());
+                Log.e(TAG, "error connecting to " + nodeAddress);
             }
 
             broadcastStateChanged();
@@ -204,13 +210,13 @@ public class Node {
             if(mConnectionState != BluetoothProfile.STATE_DISCONNECTED)
                 return;
 
-            mBluetoothGatt = mScanResult.getDevice().connectGatt(mContext,
+            mBluetoothGatt = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(nodeAddress).connectGatt(mContext,
                     false, new BluetoothSyncTimeGattCallback(), BluetoothDevice.TRANSPORT_LE);
             mConnectionState = BluetoothProfile.STATE_CONNECTING;
             if (mBluetoothGatt.connect()) {
-                Log.i(TAG, "connecting to " + mScanResult.getDevice().getAddress());
+                Log.i(TAG, "connecting to " + nodeAddress);
             } else {
-                Log.e(TAG, "error connecting to " + mScanResult.getDevice().getAddress());
+                Log.e(TAG, "error connecting to " + nodeAddress);
             }
 
             broadcastStateChanged();
@@ -322,40 +328,6 @@ public class Node {
                     }
 
                     Log.i(TAG, "found gatt services " + service.getUuid());
-
-                    /*
-                    if (service.getUuid().compareTo(UUIDCollection.CTS_SERVICE) == 0) {
-                        mCTSCharacteristics = service.getCharacteristic(UUIDCollection.CTS_CHARACTERISTICS);
-
-                        if (mCTSCharacteristics == null) {
-                            Log.e(TAG, "no CTS characteristics found");
-                            continue;
-                        }
-                    }
-
-                    if (service.getUuid().compareTo(UUIDCollection.ASS_SERVICE) == 0) {
-                        mSyncCharacteristics = service.getCharacteristic(UUIDCollection.ASS_CHARACTERISTICS);
-
-                        if (mSyncCharacteristics == null) {
-                            Log.e(TAG, "no ASS synchronization characteristic found");
-                            continue;
-                        }
-
-                        for (BluetoothGattDescriptor descriptor : mSyncCharacteristics.getDescriptors())
-                        {
-                            Log.d(TAG, descriptor.getUuid().toString());
-                        }
-                    }
-
-                    if (service.getUuid().compareTo(UUIDCollection.ANS_SERVICE) == 0) {
-                        mNameCharacteristics = service.getCharacteristic(UUIDCollection.ANS_CHARACTERISTIC);
-
-                        if (mNameCharacteristics == null) {
-                            Log.e(TAG, "could not find ANS characteristic");
-                        }
-                    }
-
-                     */
                 }
                 mHandler.post(() -> {
                     if (!remoteCharacteristics.containsKey(UUIDs.ASS_CHARACTERISTICS)) {
@@ -392,6 +364,8 @@ public class Node {
             //mBluetoothGatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
             if (mSyncEnabled) {
                 connectToNotifications();
+            } else if (remoteCharacteristics.containsKey(UUIDs.DD_ACTUATOR_STATE_CHAR)) {
+                connectToActuatorNotifications();
             } else {
                 readAllData();
             }
@@ -408,15 +382,21 @@ public class Node {
             super.onDescriptorWrite(gatt, descriptor, status);
             Log.i(TAG, "onDescriptorWrite");
 
-            repostDisconnectDelayed(RESPONSE_TIMEOUT);
+            if (descriptor.getCharacteristic().getUuid().compareTo(UUIDs.ASS_CHARACTERISTICS) == 0) {
+                repostDisconnectDelayed(RESPONSE_TIMEOUT);
 
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                //todo
-                Log.e(TAG, "error writing descriptor");
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    //todo
+                    Log.e(TAG, "error writing descriptor");
+                }
+
+                if (mSyncFinished) {
+                    synchronizeTime();
+                }
             }
 
-            if (mSyncFinished) {
-                synchronizeTime();
+            if (descriptor.getCharacteristic().getUuid().compareTo(UUIDs.DD_ACTUATOR_STATE_CHAR) == 0) {
+                readAllData();
             }
             //connectToNotifications();
         }
@@ -451,15 +431,16 @@ public class Node {
 
                 else if (characteristic.getUuid().compareTo(UUIDs.DD_ACTUATOR_STATE_CHAR) == 0) {
                     Log.d(TAG, "received " + UUIDs.DD_ACTUATOR_STATE_CHAR);
-
-                    outputPositionRelative = ByteBuffer.wrap(data, 0, 1).get();
-                    actuatorValue = outputPositionRelative;
-                    outputPositionAbsolute = ByteBuffer.wrap(data, 1, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
-                    outputMode = ByteBuffer.wrap(data, 5, 1).get();
-                    outputValueLow = ByteBuffer.wrap(data, 6, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
-                    outputValueHigh = ByteBuffer.wrap(data, 8, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
-
+                    processActuatorStateCharData(data);
+                    outputPositionRelative = actuatorValueRelative;
                     readAllData();
+                }
+
+                else if (characteristic.getUuid().compareTo(UUIDs.DD_SENSOR_CALIBRATION_CHAR) == 0) {
+                    Log.d(TAG, "received " + UUIDs.DD_SENSOR_CALIBRATION_CHAR);
+                    rawMoistureValue = ByteBuffer.wrap(data, 0, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
+                    Intent intent = new Intent(ACTION_GATT_READ_MOISTURE_DIFF_RAW);
+                    mContext.sendBroadcast(intent);
                 }
 
                 else if(characteristic.getUuid().compareTo(UUIDs.CTS_CHARACTERISTICS) == 0) {
@@ -640,8 +621,26 @@ public class Node {
                 handleDataSynchronization(RAIN_DATA);
             } else if (characteristic.getUuid().compareTo(UUIDs.ASS_CHARACTERISTICS) == 0) {
                 processSynchronizationData(characteristic.getDescriptors(), data);
+            } else if (characteristic.getUuid().compareTo(UUIDs.DD_ACTUATOR_STATE_CHAR) == 0) {
+                processActuatorStateCharData(data);
+                Intent intent = new Intent(ACTION_DATA_AVAILABLE);
+                mContext.sendBroadcast(intent);
             }
         }
+    }
+
+    private void processActuatorStateCharData(byte[] data) {
+        actuatorValueRelative = ByteBuffer.wrap(data, 0, 1).get();
+        actuatorValueAbsolute = ByteBuffer.wrap(data, 1, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        outputMode = ByteBuffer.wrap(data, 5, 1).get();
+        outputValueLow = ByteBuffer.wrap(data, 6, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
+        outputValueHigh = ByteBuffer.wrap(data, 8, 2).order(ByteOrder.LITTLE_ENDIAN).getShort();
+
+        Log.d(TAG, "processActuatorStateCharData(): actuatorValueRelative: " + actuatorValueRelative
+            + ", actuatorValueAbsolute: " + actuatorValueAbsolute
+            + ", outputMode: " + outputMode
+            + ", outputValueLow: " + outputValueLow
+            + ", outputValueHigh: " + outputValueHigh);
     }
 
     private void processSynchronizationData(List<BluetoothGattDescriptor> descs, byte[] data) {
@@ -982,6 +981,26 @@ public class Node {
         }
     }
 
+    private void connectToActuatorNotifications() throws SecurityException {
+        if (!remoteCharacteristics.containsKey(UUIDs.DD_ACTUATOR_STATE_CHAR)) {
+            Log.w(TAG, "DD_ACTUATOR_STATE_CHAR not available");
+            return;
+        }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.DD_ACTUATOR_STATE_CHAR);
+
+        BluetoothGattDescriptor desc = characteristic.getDescriptor(UUIDs.GATT_DDD);
+        if(mBluetoothGatt.setCharacteristicNotification(characteristic, true)) {
+            Log.i(TAG, "notification enable sent for "
+                    + characteristic.getUuid().toString());
+        }
+
+        desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+        if (mBluetoothGatt.writeDescriptor(desc)) {
+            Log.i(TAG, "notification descriptor written");
+        }
+    }
+
     public void readBatteryValue() throws SecurityException {
         if (!remoteCharacteristics.containsKey(UUIDs.BAS_CHARACTERISTICS)) {
             readAllData();
@@ -1015,6 +1034,18 @@ public class Node {
         BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.ESS_HUMI_CHARACTERISTICS);
         if(!mBluetoothGatt.readCharacteristic(characteristic)) {
             Log.w(TAG, "reading remote humidity value failed");
+        }
+    }
+
+    public void readRawMoistureValue() throws SecurityException {
+        if (!remoteCharacteristics.containsKey(UUIDs.ESS_HUMI_CHARACTERISTICS)) {
+            readAllData();
+            return;
+        }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.DD_SENSOR_CALIBRATION_CHAR);
+        if(!mBluetoothGatt.readCharacteristic(characteristic)) {
+            Log.w(TAG, "reading remote raw humidity value failed");
         }
     }
 
@@ -1061,6 +1092,7 @@ public class Node {
 
             case 0:
             default:
+                outputPositionRelative = valueHigh;
                 actuatorBuffer = ByteBuffer.allocate(2);
                 actuatorBuffer.put((byte) mode);
                 actuatorBuffer.put((byte) valueHigh);
@@ -1116,16 +1148,36 @@ public class Node {
         return remoteCharacteristics.containsKey(UUIDs.ESS_HUMI_CHARACTERISTICS);
     }
 
+    public boolean hasSensorCalibration() {
+        return remoteCharacteristics.containsKey(UUIDs.DD_SENSOR_CALIBRATION_CHAR);
+    }
+
     public void writeActuator(int mode, int value) throws SecurityException {
         writeActuator(mode, value, 0);
     }
 
     public void writeActuatorCalibration(int mode) throws SecurityException {
-        if (!isConnected()) {
+        if (!isConnected() || !remoteCharacteristics.containsKey(UUIDs.DD_SENSOR_CALIBRATION_CHAR)) {
             return;
         }
 
         BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.DD_ACTUATOR_CALIBRATION_CHAR);
+        ByteBuffer actuatorBuffer;
+
+        actuatorBuffer = ByteBuffer.allocate(1);
+        actuatorBuffer.put((byte) mode);
+
+        characteristic.setValue(actuatorBuffer.array());
+
+        mBluetoothGatt.writeCharacteristic(characteristic);
+    }
+
+    public void writeSensorCalibration(int mode) throws SecurityException {
+        if (!isConnected() || !remoteCharacteristics.containsKey(UUIDs.DD_SENSOR_CALIBRATION_CHAR)) {
+            return;
+        }
+
+        BluetoothGattCharacteristic characteristic = remoteCharacteristics.get(UUIDs.DD_SENSOR_CALIBRATION_CHAR);
         ByteBuffer actuatorBuffer;
 
         actuatorBuffer = ByteBuffer.allocate(1);
@@ -1323,7 +1375,7 @@ public class Node {
 
     public String getRemoteDeviceName() {
         if (mDeviceName == null) {
-            return mScanResult.getDevice().getAddress();
+            return nodeAddress;
         }
         return mDeviceName;
     }
@@ -1337,7 +1389,7 @@ public class Node {
     }
 
     public int getRssi() {
-        return mScanResult.getRssi();
+        return nodeRssi;
     }
 
     public double getTemperature() {
@@ -1347,11 +1399,11 @@ public class Node {
     public double getMoisture() {
         return mMoistureValue;
     }
+    public int getRawMoisture() { return rawMoistureValue; }
     public int getBatteryValue() { return batteryValue; }
-    public int getActuatorValue() { return actuatorValue; }
-
+    public int getActuatorValueAbsolute() { return actuatorValueAbsolute; }
+    public int getActuatorValueRelative() { return actuatorValueRelative; }
     public int getOutputPositionRelative() { return outputPositionRelative; }
-    public int getOutputPositionAbsolute() { return outputPositionRelative; }
     public int getOutputMode() { return outputMode; }
     public void setOutputMode(int outputMode) {
         this.outputMode = outputMode;
@@ -1366,6 +1418,8 @@ public class Node {
     public long getTimeLastSync() {
         return mTimeLastSync;
     }
+
+    public String getAddress() { return nodeAddress; }
 
     public int getStateStringId() {
         if(isSynchronizing())

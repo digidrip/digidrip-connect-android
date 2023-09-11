@@ -31,12 +31,11 @@ public class NodeScanner {
     public static final String URI_EDDYSTONE_AFARCLOUD = new String((char) 0x00 + "afarcloud.eu/");
 
     private BluetoothManager mBluetoothManager;
-    private BluetoothAdapter mBluetoothAdapter;
     private android.bluetooth.le.BluetoothLeScanner mBluetoothLeScanner;
 
     private Handler mHandler;
 
-    private static HashMap<String, Node> mSensorNodes = new HashMap<String, Node>();
+    private static HashMap<String, Node> mNodes = new HashMap<String, Node>();
 
     private List<NodeScannerListener> mNodeScannerListeners = new ArrayList<>();
 
@@ -62,6 +61,7 @@ public class NodeScanner {
     }
 
     private void initBle() {
+        /*
         if (mBluetoothManager == null) {
             mBluetoothManager =
                     (BluetoothManager) mContext.getSystemService(Context.BLUETOOTH_SERVICE);
@@ -69,18 +69,19 @@ public class NodeScanner {
                 Log.e(TAG, "Unable to initialize BluetoothManager.");
             }
         }
+         */
 
-        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        if (mBluetoothAdapter == null) {
+        BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        if (bluetoothAdapter == null) {
             Log.e(TAG, "Unable to obtain a BluetoothAdapter.");
         }
 
-        mBluetoothLeScanner = mBluetoothAdapter.getBluetoothLeScanner();
+        mBluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
     }
 
     public void removeAndDisconnectNodes() {
-        for (Node node : mSensorNodes.values()) {
-            mSensorNodes.remove(node.getRemoteDeviceName());
+        for (Node node : mNodes.values()) {
+            mNodes.remove(node.getRemoteDeviceName());
             node.disconnect();
         }
     }
@@ -179,8 +180,8 @@ public class NodeScanner {
 
                 Node node = null;
 
-                if(mSensorNodes.containsKey(result.getDevice().getAddress())) {
-                    node = mSensorNodes.get(result.getDevice().getAddress());
+                if(mNodes.containsKey(result.getDevice().getAddress())) {
+                    node = mNodes.get(result.getDevice().getAddress());
                     assert node != null;
                     node.initialize(result);
                 }
@@ -189,7 +190,7 @@ public class NodeScanner {
                         && checkEddystoneServiceUuids(result)) {
                     node = new Node(mContext);
                     node.initialize(result);
-                    mSensorNodes.put(node.getRemoteDeviceName(), node);
+                    mNodes.put(node.getRemoteDeviceName(), node);
                     Log.d(TAG, "Found compatible eddstone URI " + node.getRemoteDeviceName());
                 }
 
@@ -218,13 +219,13 @@ public class NodeScanner {
         Log.d(TAG, "synchronizeSensorNodes()");
         long now = Instant.now().getEpochSecond() - 3600;
 
-        for (Node node: mSensorNodes.values()) {
+        for (Node node: mNodes.values()) {
             if (node.isConnected()) {
                 return;
             }
         }
 
-        for (Node node : mSensorNodes.values()) {
+        for (Node node : mNodes.values()) {
             if (node.getTimeLastSync() < now) {
                 Log.d(TAG, "start synchronization of " + node.getRemoteDeviceName());
                 node.connectAndSyncData();
@@ -235,8 +236,8 @@ public class NodeScanner {
         Log.d(TAG, "synchronizeSensorNodes() finished");
     }
 
-    public static List<Node> getSensorNodeList() {
-        ArrayList<Node> nodes = new ArrayList(mSensorNodes.values());
+    public static List<Node> getNodeList() {
+        ArrayList<Node> nodes = new ArrayList(mNodes.values());
 
         nodes.sort((s1, s2) -> {
             if (s1.getRssi() == s2.getRssi()) {
@@ -245,6 +246,14 @@ public class NodeScanner {
             return s1.getRssi() > s2.getRssi() ? -1 : 1; // if you want to short by name
         });
         return nodes;
+    }
+
+    public static Node getNode(String addr) {
+        if (mNodes.containsKey(addr)) {
+            return mNodes.get(addr);
+        }
+
+        return null;
     }
 
     public boolean getAutoSyncPreference() {

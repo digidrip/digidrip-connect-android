@@ -98,14 +98,16 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view, int position) {
                 Intent i = new Intent(MainActivity.this, NodeActivity.class);
-                i.putExtra("position", position);
+                i.putExtra("address",
+                        NodeScanner.getNodeList().get(position).getAddress());
                 startActivity(i);
             }
 
             @Override
             public void onLongClick(View view, int position) {
                 Intent i = new Intent(MainActivity.this, NodeActivity.class);
-                i.putExtra("position", position);
+                i.putExtra("address",
+                        NodeScanner.getNodeList().get(position).getAddress());
                 //startActivity(i);
             }
         }));
@@ -201,6 +203,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        mSensorNodeAdapter.setNodeList(NodeScanner.getNodeList());
+        mSensorNodeAdapter.notifyDataSetChanged();
     }
 
     @Override
@@ -361,7 +365,7 @@ public class MainActivity extends AppCompatActivity {
 
             if(BluetoothLeService.ACTION_SENSOR_NODE_FOUND.equals(action)) {
                 Log.d(TAG, "received BluetoothLeService.ACTION_SENSOR_NODE_FOUND");
-                mSensorNodeAdapter.setSensorNodeList(NodeScanner.getSensorNodeList());
+                mSensorNodeAdapter.setNodeList(NodeScanner.getNodeList());
                 mSensorNodeAdapter.notifyDataSetChanged();
             }
 

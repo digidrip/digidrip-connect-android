@@ -75,7 +75,7 @@ public class NodeAdapater extends RecyclerView.Adapter<NodeAdapater.MyViewHolder
         return nodeList.size();
     }
 
-    public void setSensorNodeList(List<Node> nodeList) {
+    public void setNodeList(List<Node> nodeList) {
         this.nodeList = nodeList;
     }
 }

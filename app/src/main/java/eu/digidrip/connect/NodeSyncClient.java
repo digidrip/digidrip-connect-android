@@ -339,6 +339,8 @@ public class NodeSyncClient implements MqttCallbackExtended {
         } catch (MqttException e) {
             // End the Application
             Log.e(TAG, "failed to close the connection");
+        } catch (NullPointerException e) {
+            Log.e(TAG, "v3Client == null");
         }
 
         writeQueueToFile();
